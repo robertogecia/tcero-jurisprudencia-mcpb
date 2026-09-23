@@ -1,20 +1,30 @@
-# Jurisprudência TCE-RO — instalador `.mcpb` para o Claude Desktop
+# Jurisprudência do TCE-RO no Claude — instalador
 
-Código-fonte do pacote `Jurisprudencia-TCERO.mcpb` publicado nas
-[releases do servidor Python](https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest),
-que é a **fonte de verdade** (README completo, como pesquisar bem, segurança, como reportar erro e
-apoiar o projeto estão lá). Instalar: baixe o `.mcpb` na release → Claude Desktop → Configurações →
-Extensões → arraste o arquivo. Não precisa instalar Node: o Claude Desktop traz o runtime.
+Este é o **instalador** (`Jurisprudencia-TCERO.mcpb`) que dá ao Claude Desktop a capacidade de
+pesquisar a jurisprudência do Tribunal de Contas do Estado de Rondônia dentro da conversa, sem
+login e sem mexer em código. Feito para advogados **sem conhecimento nenhum de informática**.
 
-Empacotar a partir deste código:
+## Como instalar (3 passos, uns 2 minutos)
 
-```bash
-npm install && npm test
-npx -y @anthropic-ai/mcpb@latest pack . Jurisprudencia-TCERO.mcpb
-```
+1. **Baixe o arquivo:** ⬇️ [CLIQUE AQUI PARA BAIXAR (`Jurisprudencia-TCERO.mcpb`)](https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb).
+   Ele vai para a pasta **Downloads** do seu computador. *(Não use o botão verde "Code → Download
+   ZIP" desta página: ele baixa o código-fonte, que não serve para instalar.)*
+2. **Dê dois cliques** no arquivo baixado. O Claude Desktop abre perguntando se quer instalar a
+   extensão "Jurisprudência TCE-RO" — clique em **Instalar**. Se nada abrir: Claude Desktop →
+   Configurações (engrenagem) → Extensões → arraste o arquivo para essa janela.
+3. **Abra uma conversa nova** e peça, por exemplo: *"pesquise no TCE-RO acórdãos sobre dispensa de
+   licitação por emergência"*. O Claude pede autorização para usar a ferramenta — autorize.
 
-Licença MIT · Autor: Roberto Grécia Bessa (OAB/RO 7865-A) · integração não-oficial com o portal
-ePapyrus do TCE-RO.
+Precisa ter o **Claude Desktop** (o programa instalado no computador, Mac ou Windows —
+[claude.com/download](https://claude.com/download)). Pelo site ou pelo celular não funciona.
+
+## Como vai funcionar, o que ela não faz, erros comuns
+
+Está tudo explicado, em linguagem para advogado, na página principal do projeto:
+**[tcero-jurisprudencia-mcp](https://github.com/robertogecia/tcero-jurisprudencia-mcp#como-vai-funcionar-no-dia-a-dia)** —
+o que você recebe em cada busca (decisões mais pertinentes primeiro, citação pronta, link do PDF,
+inteiro teor, conferência de citação, recibo), o que ela não substitui, e a tabela "algo deu
+errado".
 
 ---
 
