@@ -192,3 +192,24 @@ erro que ecoa um valor do usuário (`relator`, `orgao_julgador`, `id`/`numero` n
   muito nesta rodada (troca de `.join(" ")` por concatenação com `hasEOL`), mas não é garantia de
   byte a byte contra PyMuPDF em todo PDF; documentos perto do teto de orçamento do PDF
   (`ORCAMENTO_PDF`) podem cortar num ponto ligeiramente diferente entre os dois motores.
+
+## Apoie o projeto
+
+O pacote é gratuito e de código aberto, e é mantido no tempo livre de um advogado: cada mudança
+do portal do TCE-RO exige diagnóstico, correção, testes e versão nova. Se ele economiza o seu
+tempo, você pode apoiar a continuidade do trabalho com qualquer valor, por **Pix**:
+
+> **Chave Pix (e-mail):** `robertogrecia@hotmail.com`
+
+O apoio é voluntário e não muda nada no uso: o pacote continua igual para todos.
+
+## Autor
+
+**Roberto Grécia Bessa** — OAB/RO 7865-A
+Instagram: [@robertogrecia](https://instagram.com/robertogrecia)
+
+Irmão dos pacotes de jurisprudência do [TJRO](https://github.com/robertogecia/tjro-jurisprudencia-mcp) e dos servidores do [TRF1](https://github.com/robertogecia/trf1-jurisprudencia-mcp) e do [TJSE](https://github.com/robertogecia/mcp-tjse-jurisprudencia), do mesmo autor.
+
+## Licença
+
+MIT — veja [LICENSE](LICENSE).
