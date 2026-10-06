@@ -9,6 +9,7 @@
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
 import { norm1, negacaoEscopo, entreAspas, obiterAntes } from "./atribuicao13.js";
+import { posicaoTcero } from "./posicao2.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -29,7 +30,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.3.0";
+export const VERSAO = "1.4.0";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const ISSUES_NOVA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/issues/new";
@@ -762,6 +763,12 @@ export function alertasAtribuicao(alvoNorm, inicio, fim, bruto = null, fragmento
   return alertas;
 }
 
+/** espelho de _posicao_tcero_trecho: o trecho localizado em norm1(texto) perto do casamento oficial. */
+function posicaoTceroTrecho(texto, alvo, inicio, fragmentos) {
+  const fx = texto ? faixaNorm(norm1(texto), fragmentos, inicio / Math.max(1, alvo.length)) : null;
+  return fx ? posicaoTcero(texto, Math.floor((fx[0] + fx[1]) / 2)) : "";
+}
+
 export function verificarTrecho(textos, trecho) {
   const fragmentos = (trecho || "")
     .split(/\[\s*\.\.\.\s*\]|\[…\]|…/)
@@ -813,6 +820,7 @@ export function verificarTrecho(textos, trecho) {
         sem_texto: false,
         motivo: `trecho encontrado literalmente em: ${nome}`,
         alertas: alertasAtribuicao(alvo, inicio, fim, texto, fragmentos),
+        posicao: posicaoTceroTrecho(texto, alvo, inicio, fragmentos),
       };
     }
     faltandoPorTexto[nome] = faltando;
@@ -1588,6 +1596,7 @@ export function linhasVerificacaoItem(s, trecho, textos) {
       linhas.push(`   ⚠️ trecho literal, porém atribuído a outra voz — conferir se é a posição da Corte: ${a}`);
     }
   }
+  if (r.valido && r.posicao) linhas.push(`   ℹ POSIÇÃO NO JULGADO: ${r.posicao}.`);
   if (!r.valido && r.faltando && r.faltando.length) {
     for (const f of r.faltando.slice(0, 3)) {
       linhas.push(`   fragmento sem correspondência: «${umaLinha(f).slice(0, 160)}»`);
