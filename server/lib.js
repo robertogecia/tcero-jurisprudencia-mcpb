@@ -8,6 +8,7 @@
 // (que ficam em index.js). Isto é de propósito: a v1.2.0 (ranking/panorama) que vem depois deste
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
+import { norm1, negacaoEscopo, entreAspas, obiterAntes } from "./atribuicao13.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,7 +29,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.2.0";
+export const VERSAO = "1.3.0";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const ISSUES_NOVA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/issues/new";
@@ -673,11 +674,45 @@ const JANELA_NEGACAO_CHARS = 80;
 const RE_ASPA_FRONTEIRA = /(?<!\w)'|'(?!\w)/g;
 const JANELA_ATRIBUICAO_CHARS = 200;
 
-export function alertasAtribuicao(alvoNorm, inicio, fim) {
+// v1.3.0 (06/10/2026): regras do TJRO v1.13/1.16 pelo bloco compartilhado (cópia byte a byte do TRT14/TJSE/TRF1/OAB)
+const normalizarCasamentoN1 = (t) => (norm1(t).match(/[a-z0-9]+/g) || []).join(" ");
+const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function faixaNorm(nt, fragmentos, pertoDe = 0.0) {
+  const lista = fragmentos.map((f) => normalizarCasamentoN1(f).split(" ").filter(Boolean)).filter((ps) => ps.length);
+  if (!lista.length) return null;
+  const pad = (ps) => new RegExp("(?<![a-z0-9])" + ps.map(escRe).join("[^a-z0-9]+") + "(?![a-z0-9])", "g");
+  const inicios = [...nt.matchAll(pad(lista[0]))].map((m) => m.index);
+  if (!inicios.length) return null;
+  const alvo = pertoDe * nt.length;
+  let pos = inicios[0];
+  for (const i of inicios) if (Math.abs(i - alvo) < Math.abs(pos - alvo)) pos = i;
+  let ini = null, fim = null;
+  for (const ps of lista) {
+    const re = pad(ps); re.lastIndex = pos;
+    const m = re.exec(nt);
+    if (!m) return null;
+    ini = ini === null ? m.index : ini;
+    pos = fim = m.index + m[0].length;
+  }
+  return [ini, fim];
+}
+
+export function alertasAtribuicao(alvoNorm, inicio, fim, bruto = null, fragmentos = null) {
   const antesNeg = alvoNorm.slice(Math.max(0, inicio - JANELA_NEGACAO_CHARS), inicio);
   const antesAtr = alvoNorm.slice(Math.max(0, inicio - JANELA_ATRIBUICAO_CHARS), inicio);
   const alertas = [];
-  if (RE_NEGACAO_ANTES.test(antesNeg)) {
+  let fx = null, nt1 = "";
+  if (bruto !== null && fragmentos && fragmentos.length) {
+    nt1 = norm1(bruto);
+    fx = faixaNorm(nt1, fragmentos, inicio / Math.max(1, alvoNorm.length));
+  }
+  if (fx !== null) {
+    if (negacaoEscopo(nt1, fx[0], fx[1], bruto))
+      alertas.push(
+        'NEGAÇÃO: há negação que alcança o trecho ("não"/"nem"/"sem razão"/"afasto"/"julgo improcedente"...), ' +
+          "sem quebra de oração no meio — o recorte pode inverter o sentido do julgado. Não citar sem ler a frase inteira."
+      );
+  } else if (RE_NEGACAO_ANTES.test(antesNeg)) {
     alertas.push(
       'NEGAÇÃO: há negação ("não"/"nem"/"sem"/"indefere"/"improcedente"/' +
         '"afasto"...) até ~80 caracteres antes do trecho — o recorte pode inverter o ' +
@@ -708,12 +743,21 @@ export function alertasAtribuicao(alvoNorm, inicio, fim) {
     );
   }
   const aspasAntes = (alvoNorm.slice(0, inicio).match(RE_ASPA_FRONTEIRA) || []).length;
-  if (aspasAntes % 2 === 1 && RE_ASPA_FRONTEIRA.test(alvoNorm.slice(fim, fim + 300))) {
+  RE_ASPA_FRONTEIRA.lastIndex = 0;
+  const entre = fx !== null ? entreAspas(bruto, nt1, fx[0], fx[1])
+    : aspasAntes % 2 === 1 && RE_ASPA_FRONTEIRA.test(alvoNorm.slice(fim, fim + 300));
+  RE_ASPA_FRONTEIRA.lastIndex = 0;
+  if (entre) {
     alertas.push(
       "ENTRE ASPAS: o trecho parece estar dentro de aspas no texto — o tribunal pode " +
         "estar citando alguém (doutrina, lei, decisão recorrida, outro julgado). Confira de " +
         "quem é a frase antes de atribuí-la ao TCE-RO."
     );
+  }
+  if (fx !== null && !entre && !alertas.some((a) => a.startsWith("TRANSCRIÇÃO") || a.startsWith("PARECER"))) {
+    const ob = obiterAntes(nt1, fx[0], fx[1], bruto);
+    if (ob)
+      alertas.push(`OBITER DICTUM?: o trecho vem sob «${ob}» — raciocínio hipotético ou fundamento alternativo; o resultado do julgado não dependeu dele. Vale como reforço, não como ratio decidendi; cite dizendo que é obiter.`);
   }
   return alertas;
 }
@@ -768,7 +812,7 @@ export function verificarTrecho(textos, trecho) {
         faltando: [],
         sem_texto: false,
         motivo: `trecho encontrado literalmente em: ${nome}`,
-        alertas: alertasAtribuicao(alvo, inicio, fim),
+        alertas: alertasAtribuicao(alvo, inicio, fim, texto, fragmentos),
       };
     }
     faltandoPorTexto[nome] = faltando;
