@@ -63,7 +63,7 @@ export function posicaoGenerica(texto, meio, { ementa = null, relatorio = null, 
   for (const [a, b] of votos) {
     if (!(a <= meio && meio < b)) continue;
     let disp = dispIni !== null && a <= dispIni && dispIni < b ? dispIni : -1;
-    if (disp < 0) {
+    if (disp < 0 && dispIni !== -1) {   // -1 = o chamador já procurou e não há dispositivo localizável
       const tn = norm1(texto.slice(a, b));
       for (const m of tn.matchAll(RE_DISPOSITIVO_VOTO)) if (RE_RESULTADO_VOTO.test(tn.slice(m.index, m.index + 300))) disp = a + m.index;
     }
@@ -79,7 +79,7 @@ const stripPy = (s, chars) => { let a = 0, b = s.length; while (a < b && chars.i
 const WS_PY = " \t\n\r\f\v";
 
 // ---------------------------------------------------------------- TRT14
-const RE_CAB_TRT = new RegExp(`${INI}[ \\t]*(IDENTIFICA[ÇC][ÃA]O|EMENTA|FUNDAMENTA[ÇC][ÃA]O|ASSINATURA|VOTOS|AC[ÓO]RD[ÃA]O|DECIS[ÃA]O`
+const RE_CAB_TRT = new RegExp(`${INI}[ \\t]*(IDENTIFICA[ÇC][ÃA]O|EMENTA|FUNDAMENTA[ÇC][ÃA]O|ASSINATURA|VOTOS|AC[ÓO]RD[ÃA]O|DECIS[ÃA]O|RELAT[ÓO]RIO|FUNDAMENTOS|CONCLUS[ÃA]O`
   + `|(\\d+)(?:\\.(\\d+))*\\.?[ \\t]+([^\\n]{2,80}?))[ \\t]*:?[ \\t]*${FIM}`, "g");
 /** _posicao_trt14: IDENTIFICAÇÃO → EMENTA → FUNDAMENTAÇÃO → "1 RELATÓRIO" → "2 FUNDAMENTOS" ("2.x CONCLUSÃO" = dispositivo) →
  * "3 DECISÃO"/"ACÓRDÃO" → ASSINATURA → VOTOS. */
@@ -91,26 +91,36 @@ export function posicaoTrt14(bruto, meio) {
     const topo = m[2], sub = m[3], nome = stripPy(norm1(m[4] || ""), " .:");
     if (g.startsWith("identifica") && ident < 0) ident = m.index;
     else if (g === "ementa" && ementa < 0) ementa = m.index;
-    else if (g.startsWith("fundamenta") && !topo && fund < 0) fund = m.index;
-    else if (topo === "1" && !sub && nome.startsWith("relatorio") && rel < 0) rel = m.index;
-    else if (topo === "2" && !sub && rel >= 0 && fundamentos < 0) fundamentos = m.index;
-    else if (topo === "2" && sub && nome.startsWith("conclus") && fundamentos >= 0 && decisao < 0) conclusao = m.index;
+    else if (g.startsWith("fundamentacao") && !topo && fund < 0) fund = m.index;
+    else if (rel < 0 && ((topo === "1" && !sub && nome.startsWith("relatorio")) || (!topo && g === "relatorio" && fund >= 0))) rel = m.index;
+    else if (fundamentos < 0 && rel >= 0 && ((topo === "2" && !sub) || (!topo && g === "fundamentos"))) fundamentos = m.index;
+    else if (fundamentos >= 0 && decisao < 0 && ((topo === "2" && sub && nome.startsWith("conclus")) || (!topo && g === "conclusao"))) conclusao = m.index;
     else if (fundamentos >= 0 && decisao < 0 && ((topo === "3" && !sub && (nome.startsWith("decis") || nome.startsWith("acord")))
-      || (!topo && (g.startsWith("decis") || g.startsWith("acord"))))) decisao = m.index;
+      || (!topo && (g.startsWith("decis") || g.startsWith("acord"))
+        && /(?<![a-z0-9])acordam(?![a-z0-9])/.test(norm1(bruto.slice(m.index + m[0].length, m.index + m[0].length + 600)))))) decisao = m.index;
     else if (g === "assinatura" && assin < 0 && m.index > Math.max(rel, fundamentos)) assin = m.index;
     else if (g === "votos" && votosIni < 0 && m.index > Math.max(rel, fundamentos, assin)) votosIni = m.index;
   }
+  const relIni = 0 <= fund && fund < rel && rel - fund < 120 ? fund : rel;
   const fimVoto = proximo([decisao, assin, votosIni, n], fundamentos, n);
+  let disp = conclusao;
+  if (disp < 0 && fundamentos >= 0) {
+    // espelho do Python: sem CONCLUSÃO, só fórmula com resultado no último terço do voto
+    const tn = norm1(bruto).slice(0, fimVoto), corte = fundamentos + Math.floor(((fimVoto - fundamentos) * 2) / 3);
+    const re = new RegExp(RE_DISPOSITIVO_VOTO.source, "g"); re.lastIndex = corte; const forms = [];
+    for (let x; (x = re.exec(tn)) !== null;) if (RE_RESULTADO_VOTO.test(norm1(bruto).slice(x.index, x.index + 300))) forms.push(x.index);
+    disp = forms.length ? forms[forms.length - 1] : -1;
+  }
   const iniCorpo = [ementa, fund, rel].find((x) => x >= 0) ?? -1;
   return posicaoGenerica(bruto, meio, {
     cabecalho: iniCorpo > 0 ? [0, iniCorpo] : null,
     ementa: ementa >= 0 ? [ementa, proximo([fund, rel, n], ementa, n)] : null,
-    relatorio: rel >= 0 ? [rel, proximo([fundamentos, decisao, n], rel, n)] : null,
+    relatorio: rel >= 0 ? [relIni, proximo([fundamentos, decisao, n], rel, n)] : null,
     votos: fundamentos >= 0 ? [[fundamentos, fimVoto]] : [],
     fecho: decisao >= 0 ? [decisao, proximo([assin, votosIni, n], decisao, n)] : null,
     certidao: assin >= 0 ? [assin, votosIni > assin ? votosIni : n] : null,
     outros: votosIni >= 0 ? [[votosIni, n, "VOTOS de outros magistrados"]] : [],
-    dispIni: conclusao >= 0 ? conclusao : null,
+    dispIni: disp,
   });
 }
 
@@ -202,10 +212,10 @@ export function posicaoTcero(bruto, meio) {
 }
 
 // ---------------------------------------------------------------- TED-OAB/SP
-const RE_FECHO_TED = /Proc(?:esso|\.)?[ \t]*(?:n[º°.]?[ \t]*)?[\dE][\d.\-/E ]{3,40}?[ \t]*[-–][ \t]*v\.[ \t]*[um]\.[^\n]*/i;
+const RE_FECHO_TED = /Proc(?:esso|\.)?[ \t]*(?:n[º°.]?[ \t]*)?[\dE][\d.\-/E ]{3,40}?[ \t]*[-–,][ \t]*v\.[ \t]*[um]\.[^\n]*/i;
 const RE_CAB_TED = new RegExp(`${INI}[ \\t]*(?:[IVX]{1,4}[ \\t]*[.–-][ \\t]*|\\d{1,2}[ \\t]*[.–-][ \\t]*)?(RELAT[ÓO]RIO(?:[ \\t]+E[ \\t]+(?:PARECER|VOTO))?|CONSULTA(?:[ \\t]+E[ \\t]+RELAT[ÓO]RIO)?|PARECER(?:[ \\t]+E[ \\t]+VOTO)?(?:[ \\t]+VENCEDOR)?`
-  + `|CONCLUS[ÃA]O(?:[ \\t]+E[ \\t]+VOTO)?|VOTO(?:[ \\t]+(?:DIVERGENTE|VENCIDO|VENCEDOR|DO[ \\t]+REVISOR|DO[ \\t]+RELATOR))?`
-  + `|DECLARA[ÇC][ÃA]O[ \\t]+DE[ \\t]+VOTO[^\\n]{0,30})[ \\t]*[-–:.]?[ \\t]*${FIM}`, "g");
+  + `|CONCLUS[ÃA]O(?:[ \\t]+E[ \\t]+VOTO)?|VOTO(?:[ \\t]+(?:DIVERGENTE|CONVERGENTE|VENCIDO|VENCEDOR|DO[ \\t]+REVISOR|DO[ \\t]+RELATOR))?`
+  + `|DECLARA[ÇC][ÃA]O[ \\t]+DE[ \\t]+VOTO[^\\n]{0,30})[ \\t]*(?:[-–:.][ \\t]*(?:(?:[A-ZÀ-Ú][a-zà-ú]|[A-ZÀ-Ú][ \\t]+[a-zà-ú]|[1-9“"(])[^\\n]*)?)?${FIM}`, "g");
 /** _posicao_ted: ementa → linha do julgamento ("Proc. … – v.u.") → RELATÓRIO/CONSULTA → PARECER/VOTO (CONCLUSÃO = dispositivo) →
  * VOTO DIVERGENTE / declaração de voto. */
 export function posicaoTed(texto, meio) {
@@ -229,22 +239,37 @@ export function posicaoTed(texto, meio) {
         if (er) { rel = rel || [p, p + er.index + er[0].length]; votos.push([p + er.index + er[0].length, f]); return; }
       }
       rel = rel || [p, f];
-    } else if (k.includes("divergente") || k.includes("vencido") || k.startsWith("declaracao") || k.includes("revisor")) {
-      outros.push([p, f, "VOTO DIVERGENTE ou declaração de voto"]);
+    } else if (k.includes("divergente") || k.includes("convergente") || k.includes("vencido") || k.startsWith("declaracao") || k.includes("revisor")) {
+      outros.push([p, f, "VOTO DIVERGENTE ou CONVERGENTE, ou declaração de voto"]);
     } else if (k.startsWith("conclus") && votos.length) {
       votos[votos.length - 1] = [votos[votos.length - 1][0], f]; if (conclusao === null) conclusao = p;
     } else votos.push([p, f]);
   });
   if (fecho && marcas.length && marcas[0][0] > fecho[1] + 40) votos.unshift([fecho[1], marcas[0][0]]);
   if (!votos.length && rel === null && fecho && fecho[1] < n) votos = [[fecho[1], n]];
+  const RE_FIM_REL = /(?<![a-z0-9])(?:e o (?:breve )?relatorio|e o que basta relatar|passo ao parecer|passo a opinar|passo a responder)(?![a-z0-9])/;
+  if (rel !== null && !votos.length) {
+    const er = RE_FIM_REL.exec(norm1(texto.slice(rel[0], rel[1])));
+    if (er) { votos.push([rel[0] + er.index + er[0].length, rel[1]]); rel = [rel[0], rel[0] + er.index + er[0].length]; }
+  }
   if (rel === null && votos.length) {
     const [a0, b0] = votos[0];
     const er = /(?<![a-z0-9])(?:e o (?:breve )?relatorio|e o que basta relatar|passo ao parecer|passo a opinar|passo a responder)(?![a-z0-9])/.exec(norm1(texto.slice(a0, b0)));
     if (er) { rel = [a0, a0 + er.index + er[0].length]; votos[0] = [a0 + er.index + er[0].length, b0]; }
   }
-  if (fecho && /ementa d[oa] rev\.|vencid[oa] [oa] relator|voto vencedor/.test(norm1(texto.slice(fecho[0], fecho[1]))) && outros.length) {
+  if (fecho && /ementa d[oa] rev\.|vencid[oa] [oa] relator|voto vencedor/.test(norm1(texto.slice(fecho[0], fecho[1]))) && outros.length
+    && !marcas.some(([, k]) => k.includes("vencido"))) {
     const v = votos;
     votos = outros.map(([a, b]) => [a, b]); outros = v.map(([a, b]) => [a, b, "parecer do RELATOR VENCIDO"]);
+  }
+  if (conclusao === null) {
+    const v = votos.find(([a, b]) => a <= meio && meio < b) || null;
+    if (v) {   // espelho do Python: fórmula com resultado só no último terço do parecer
+      const tnAll = norm1(texto), tn = tnAll.slice(0, v[1]), corte = v[0] + Math.floor(((v[1] - v[0]) * 2) / 3);
+      const re = new RegExp(RE_DISPOSITIVO_VOTO.source, "g"); re.lastIndex = corte; const forms = [];
+      for (let x; (x = re.exec(tn)) !== null;) if (RE_RESULTADO_VOTO.test(tnAll.slice(x.index, x.index + 300))) forms.push(x.index);
+      conclusao = forms.length ? forms[forms.length - 1] : -1;
+    }
   }
   return posicaoGenerica(texto, meio, { ementa, fecho, relatorio: rel, votos, outros, dispIni: conclusao });
 }
