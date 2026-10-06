@@ -31,7 +31,9 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(AQUI, "fixtures")
 LIB_JS = os.path.join(os.path.dirname(AQUI), "server", "lib.js")
 INDEX_JS = os.path.join(os.path.dirname(AQUI), "server", "index.js")
-PY_SOURCE = "/tmp/servidor_tcero_v121.py"
+# 06/10/2026 (v1.3.0): Python e Node mudaram juntos (regras do TJRO); a paridade passa a ser contra o servidor ATUAL.
+# Para comparar com o congelado de setembro: TCERO_PY_SOURCE=/tmp/servidor_tcero_v121.py
+PY_SOURCE = os.environ.get("TCERO_PY_SOURCE") or os.path.expanduser("~/MCP/tcero-jurisprudencia/servidor_tcero.py")
 
 
 def _garantir_fonte_python():
