@@ -106,7 +106,13 @@ export function alegacaoDaParte(tn, ini0, fim = null, bruto = null) {
 }
 
 const RE_NEG_OPERADOR = /(?<![a-z0-9])(?:nao|jamais|nunca|nem|descabe|descabid[oa]s?|incabive(?:l|is)|afasta-se|afasto|afastad[oa]s?|rejeita-se|rejeito|rejeitad[oa]s?|nego|negou|negar|nega-se|negam|improcede|julg(?:ou|o|ar|aram|ada|ado|ados|adas)[ \t\n\r\f\v]+improcedentes?|inexist(?:e|em|ir|iu|indo)|carece|carecem|impossibilidade de|sem razao|sem razoes)(?![a-z0-9])/g;
-const RE_NEG_FALSA = /^[ \t\n\r\f\v]*(?:obstante|so\b|apenas|somente|se[ \t\n\r\f\v]+confunde|fosse\b|(?:havendo|ha|houve|resta|restam|restando|pairam?)[ \t\n\r\f\v]+(?:qualquer[ \t\n\r\f\v]+|mais[ \t\n\r\f\v]+)?duvidas?)/;
+const RE_NEG_FALSA = /^[ \t\n\r\f\v]*(?:obstante|so\b|apenas|somente|se[ \t\n\r\f\v]+confunde|fosse\b|(?:havendo|ha|houve|resta|restam|restando|pairam?)[ \t\n\r\f\v]+(?:qualquer[ \t\n\r\f\v]+|mais[ \t\n\r\f\v]+)?duvidas?|(?:e|era|foi|sao|seria)[ \t\n\r\f\v]+(?:outr[oa]s?|diferente|divers[oa]s?)\b|se[ \t\n\r\f\v]+(?:desconhece|ignora|olvida|nega|discute|questiona)\b|(?:se[ \t\n\r\f\v]+)?pode[ \t\n\r\f\v]+(?:deixar|olvidar|ignorar|negar)\b|deixa[ \t\n\r\f\v]+de\b|ha[ \t\n\r\f\v]+como[ \t\n\r\f\v]+negar|ha[ \t\n\r\f\v]+negar)/;
+// gabarito cego de 06/10/2026 (validação em 120 trechos novos: falso alarme 42% → 31%, cobertura 100% → 98%): negação a mais de 6
+// palavras já fechou a própria oração; "não utilizado pelo…" nega o particípio; "…, e não sobre…" recusa uma alternativa
+const NEGACAO_DIST_MAX = 6;
+const RE_NEG_PARTICIPIO = /^[ \t\n\r\f\v]*(?:\w+mente[ \t\n\r\f\v]+)?[a-z]+(?:ad|id)[oa]s?\b/;
+const RE_NEG_AUX = /^[ \t\n\r\f\v]*(?:tenha|tem|ha|havia|foi|for|seja|sido|esta|estava)\b/;
+const RE_NEG_PREP = /^[ \t\n\r\f\v]*(?:sobre|pel[oa]s?|para|por|com|contra|ante|perante|apenas|so|somente|mais|menos)\b/;
 const RE_QUEBRA_ORACAO = /[.;:]|,[ \t\n\r\f\v]*(?:mas|e|ou|que|o que|de forma|de modo|sendo|alem|conforme|porque|pois|porquanto|embora|ainda|razao pela|motivo pelo|[a-z]+ndo)(?![a-z0-9])|[ \t\n\r\f\v]mas[ \t\n\r\f\v]/;
 const NEGACAO_JANELA = 80, NEGACAO_ALCANCE_MIN = 3;
 const tiraEspacos = (s) => s.replace(/^ +| +$/g, "");
@@ -124,6 +130,8 @@ export function negacaoEscopo(tn, ini0, fim, bruto = null) {
   const ponte = jan.slice(op.index + op[0].length);
   if (/[.;:]/.test(ponte)) return false;
   if (ponte.includes(",") && tiraEspacos(ponte).length > 15) return false;
+  if ((ponte.match(/[^ \t\n\r\f\v]+/g) || []).length > NEGACAO_DIST_MAX) return false;
+  if (op[0] === "nao" && (RE_NEG_PREP.test(ponte) || (RE_NEG_PARTICIPIO.test(ponte) && !RE_NEG_AUX.test(ponte)))) return false;
   const tr = tn.slice(ini0, fim);
   if (/^[ \t\n\r\f\v]*[eE][ \t\n\r\f\v,]/.test(bruto !== null ? bruto.slice(ini0, fim) : tr)) return false;
   const q = RE_QUEBRA_ORACAO.exec(tr);
@@ -187,7 +195,7 @@ export function entreAspas(bruto, tn, ini0, fim, cit = null) {
 }
 
 // OBITER DICTUM? (espelho do TJRO 1.15.0 / _obiter_antes): marca contrafactual ou de fundamento alternativo na MESMA frase do trecho
-export const RE_OBITER = /(?<![a-z0-9])(?:ainda que assim nao fosse|se assim nao fosse|(?:ainda|mesmo) que (?:se )?(?:admitisse(?:mos)?|superad[ao]s?|ultrapassad[ao]s?|afastad[ao]s?|entendesse(?:mos)?|considerasse(?:mos)?|fosse|houvesse|pudesse)|a titulo de (?:argumentacao|reforco|ilustracao|obiter dictum)|(?:apenas|somente|so) para argumentar|ad argumentandum(?: tantum)?|por amor ao debate|obiter dictum|caso se entendesse)(?![a-z0-9])/g;
+export const RE_OBITER = /(?<![a-z0-9])(?:ainda que assim nao fosse|se assim nao fosse|(?:ainda|mesmo) que (?:se )?(?:admitisse(?:mos)?|superad[ao]s?|ultrapassad[ao]s?|afastad[ao]s?|entendesse(?:mos)?|considerasse(?:mos)?|fosse|houvesse|pudesse)|a titulo de (?:argumentacao|reforco|ilustracao|obiter dictum)|(?:apenas|somente|so) para argumentar|ad argumentandum(?: tantum)?|por amor ao debate|obiter dictum|caso se entendesse|registre-se,? (?:por oportuno|de passagem)|a titulo de registro|apenas (?:para|a titulo de) registro)(?![a-z0-9])/g;
 export const OBITER_JANELA = 400, OBITER_CABECA = 0.4;
 export function obiterAntes(tn, ini0, fim, bruto) {
   const cabeca = ini0 + Math.trunc((fim - ini0) * OBITER_CABECA);
