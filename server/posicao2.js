@@ -77,6 +77,7 @@ export function posicaoGenerica(texto, meio, { ementa = null, relatorio = null, 
 const proximo = (lista, depois, padrao) => { for (const x of lista) if (x > depois) return x; return padrao; };
 const stripPy = (s, chars) => { let a = 0, b = s.length; while (a < b && chars.includes(s[a])) a++; while (b > a && chars.includes(s[b - 1])) b--; return s.slice(a, b); };
 const WS_PY = " \t\n\r\f\v";
+const WS_PY_ALL = "\u0009\u000a\u000b\u000c\u000d\u001c\u001d\u001e\u001f\u0020\u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000";   // str.isspace() do CPython, para o .strip() sem argumento
 
 // ---------------------------------------------------------------- TRT14
 const RE_CAB_TRT = new RegExp(`${INI}[ \\t]*(IDENTIFICA[ÇC][ÃA]O|EMENTA|FUNDAMENTA[ÇC][ÃA]O|ASSINATURA|VOTOS|AC[ÓO]RD[ÃA]O|DECIS[ÃA]O|RELAT[ÓO]RIO|FUNDAMENTOS|CONCLUS[ÃA]O`
@@ -212,10 +213,11 @@ export function posicaoTcero(bruto, meio) {
 }
 
 // ---------------------------------------------------------------- TED-OAB/SP
-const RE_FECHO_TED = /Proc(?:esso|\.)?[ \t]*(?:n[º°.]?[ \t]*)?[\dE][\d.\-/E ]{3,40}?[ \t]*[-–,][ \t]*v\.[ \t]*[um]\.[^\n]*/i;
-const RE_CAB_TED = new RegExp(`${INI}[ \\t]*(?:[IVX]{1,4}[ \\t]*[.–-][ \\t]*|\\d{1,2}[ \\t]*[.–-][ \\t]*)?(RELAT[ÓO]RIO(?:[ \\t]+E[ \\t]+(?:PARECER|VOTO))?|CONSULTA(?:[ \\t]+E[ \\t]+RELAT[ÓO]RIO)?|PARECER(?:[ \\t]+E[ \\t]+VOTO)?(?:[ \\t]+VENCEDOR)?`
+const RE_FECHO_TED = /Proc(?:esso|\.)?[ \t]*(?:n[º°.]?[ \t]*)?[\dE][\d.\-/E ]{3,40}?[ \t]*(?:[-–,][ \t]*)?(?:v\.[ \t]*[um]\.|em[ \t]+\d{1,2}[./]\d{1,2}[./]\d{2,4}\b[^\n]{0,250}?(?:unanim|maioria))[^\n]*/i;
+const RE_CAB_TED = new RegExp(`${INI}[ \\t]*(?:[IVX]{1,4}[ \\t]*[.–-][ \\t]*|\\d{1,2}[ \\t]*[.–-][ \\t]*)?(Relat[óo]rio(?=[ \\t]*[:.]?[ \\t]*${FIM})|Parecer(?=[ \\t]*[:.]?[ \\t]*${FIM})|RELAT[ÓO]RIO(?:[ \\t]+E[ \\t]+(?:PARECER|VOTO))?|CONSULTA(?:[ \\t]+E[ \\t]+RELAT[ÓO]RIO)?|PARECER(?:[ \\t]+E[ \\t]+VOTO|[ \\t]*/[ \\t]*VOTO)?(?:[ \\t]+VENCEDOR)?`
+  + `|VOTO[ \\t-]+VISTA(?:[ \\t]+(?:VENCEDOR|VENCIDO|CONVERGENTE|DIVERGENTE))*(?:[ \\t]+(?:AO|DO|DA)[ \\t]+[A-ZÀ-Ú](?:[A-ZÀ-Ú.º \\t]|Dra?\\.){2,90})?|VOTO(?:[ \\t]+(?:VENCEDOR|VENCIDO|CONVERGENTE|DIVERGENTE|PARCIALMENTE))+[ \\t]+(?:AO|DO|DA)[ \\t]+[A-ZÀ-Ú](?:[A-ZÀ-Ú.º \\t]|Dra?\\.){2,90}|VOTO[ \\t]+D[OA][ \\t]+(?:RELATOR|REVISOR|JULGADOR)A?(?:[ \\t]+[A-ZÀ-Ú](?:[A-ZÀ-Ú.º \\t]|Dra?\\.){1,90})?`
   + `|CONCLUS[ÃA]O(?:[ \\t]+E[ \\t]+VOTO)?|VOTO(?:[ \\t]+(?:DIVERGENTE|CONVERGENTE|VENCIDO|VENCEDOR|DO[ \\t]+REVISOR|DO[ \\t]+RELATOR))?`
-  + `|DECLARA[ÇC][ÃA]O[ \\t]+DE[ \\t]+VOTO[^\\n]{0,30})[ \\t]*(?:[-–:.][ \\t]*(?:(?:[A-ZÀ-Ú][a-zà-ú]|[A-ZÀ-Ú][ \\t]+[a-zà-ú]|[1-9“"(])[^\\n]*)?)?${FIM}`, "g");
+  + `|DECLARA[ÇC][ÃA]O[ \\t]+DE[ \\t]+VOTO[^\\n]{0,120})[ \\t]*(?:[-–:.][ \\t]*(?:(?:[A-ZÀ-Ú][a-zà-ú]|[A-ZÀ-Ú][ \\t]+[A-ZÀ-Ú]?[a-zà-ú]|[1-9“"(])[^\\n]*)?)?${FIM}`, "g");
 /** _posicao_ted: ementa → linha do julgamento ("Proc. … – v.u.") → RELATÓRIO/CONSULTA → PARECER/VOTO (CONCLUSÃO = dispositivo) →
  * VOTO DIVERGENTE / declaração de voto. */
 export function posicaoTed(texto, meio) {
@@ -227,22 +229,42 @@ export function posicaoTed(texto, meio) {
   if (fm) {
     const fEnd = fm.index + fm[0].length;
     const fe = texto.indexOf("\n\n", fEnd);
-    fecho = [fm.index, 0 <= fe && fe < corpo0 + 1 ? fe : Math.max(fEnd, Math.min(corpo0, n))];
+    fecho = [fm.index, 0 <= fe && fe < corpo0 + 1 && !stripPy(texto.slice(fe, corpo0), WS_PY_ALL) ? corpo0   // só espaço até o 1º título: é do fecho
+      : 0 <= fe && fe < corpo0 + 1 ? fe : Math.max(fEnd, Math.min(corpo0, n))];
   }
-  const ementa = fm ? [0, fm.index] : (corpo0 < n ? [0, corpo0] : null);
-  let rel = null, votos = [], outros = [], conclusao = null;
+  const ementa = fm ? [0, fm.index] : (corpo0 < n || n < 3000 ? [0, corpo0] : null);   // sem título nem fecho: verbete curto
+  let rel = null, votos = [], outros = [], conclusao = null, emOutro = false;
   marcas.forEach(([p, k], i) => {
     const f = i + 1 < marcas.length ? marcas[i + 1][0] : n;
+    // (07/10/2026) VOTO CONVERGENTE / VENCIDO com RELATÓRIO e PARECER próprios: as subseções pertencem a esse voto
+    if (emOutro && !["divergente", "convergente", "vencido", "vencedor", "do relator", "revisor"].some((x) => k.includes(x))
+        && !k.startsWith("declaracao")) {
+      const u = outros[outros.length - 1]; outros[outros.length - 1] = [u[0], f, u[2]]; return;
+    }
+    emOutro = false;
     if (k.startsWith("relatorio") || k.startsWith("consulta")) {
+      if (rel !== null && k.startsWith("relatorio") && !k.includes(" e ")) {
+        if (votos.length && /(?<![a-z0-9])v\. ?[um]\./.test(norm1(texto.slice(Math.max(0, p - 600), p)))) {
+          votos[votos.length - 1] = [votos[votos.length - 1][0], f]; return;   // parecer antigo transcrito, aberto pela própria linha "v.u., em …"
+        }
+        if (!(votos.length || outros.length)) { rel = [rel[0], f]; return; }   // dois RELATÓRIOS seguidos
+        // (07/10/2026) segundo RELATÓRIO depois de um voto: começa o texto de outro julgador cujo título não foi reconhecido
+        outros.push([p, f, "voto de outro julgador (com relatório próprio)"]); emOutro = true; return;
+      }
       if (k.includes(" e ") && !k.startsWith("consulta e")) {
         const er = /(?<![a-z0-9])e o (?:breve )?relatorio(?![a-z0-9])/.exec(norm1(texto.slice(p, f)));
         if (er) { rel = rel || [p, p + er.index + er[0].length]; votos.push([p + er.index + er[0].length, f]); return; }
       }
       rel = rel || [p, f];
-    } else if (k.includes("divergente") || k.includes("convergente") || k.includes("vencido") || k.startsWith("declaracao") || k.includes("revisor")) {
-      outros.push([p, f, "VOTO DIVERGENTE ou CONVERGENTE, ou declaração de voto"]);
+    } else if ((k.includes("divergente") || k.includes("convergente") || k.includes("vencido") || k.startsWith("declaracao") || k.includes("revisor")
+        || k.includes("vista")) && !(k.includes("vencedor") && !k.includes("convergente"))) {   // "VOTO VENCEDOR DO REVISOR" conduz
+      outros.push([p, f, k.includes("vencido") ? "VOTO VENCIDO" : k.includes("convergente") ? "VOTO CONVERGENTE" : k.includes("divergente")
+        ? "VOTO DIVERGENTE" : k.includes("vista") ? "VOTO-VISTA" : k.startsWith("declaracao") ? "declaração de voto" : "voto do REVISOR"]);
+      emOutro = true;
     } else if (k.startsWith("conclus") && votos.length) {
       votos[votos.length - 1] = [votos[votos.length - 1][0], f]; if (conclusao === null) conclusao = p;
+    } else if (k.startsWith("conclus")) {   // CONCLUSÃO logo depois de "CONSULTA E RELATÓRIO": é o dispositivo
+      votos.push([p, f]); if (conclusao === null) conclusao = p;
     } else votos.push([p, f]);
   });
   if (fecho && marcas.length && marcas[0][0] > fecho[1] + 40) votos.unshift([fecho[1], marcas[0][0]]);
@@ -252,12 +274,27 @@ export function posicaoTed(texto, meio) {
     const er = RE_FIM_REL.exec(norm1(texto.slice(rel[0], rel[1])));
     if (er) { votos.push([rel[0] + er.index + er[0].length, rel[1]]); rel = [rel[0], rel[0] + er.index + er[0].length]; }
   }
+  if (rel !== null) {
+    // (07/10/2026) relatório que segue direto no parecer, sem outro título: corta em "é o relatório" ou no começo do parecer
+    const tr = norm1(texto.slice(rel[0], rel[1]));
+    const er = RE_FIM_REL.exec(tr);
+    let cut = er ? rel[0] + er.index + er[0].length : null;
+    if (cut === null) {
+      const ei = /(?<![a-z0-9])(?:recebo a consulta|conheco da consulta|conheco a consulta|passo a (?:analisar|examinar)|passamos ao parecer|consulta (?:deve|merece|pode) ser conhecida)(?![a-z0-9])/.exec(tr);
+      let ini = 0;   // o parecer começa no parágrafo da frase
+      if (ei) { const j = texto.slice(rel[0], rel[0] + ei.index).lastIndexOf("\n"); ini = j >= 0 ? rel[0] + j + 1 : 0; }
+      cut = ei && ini > rel[0] + 30 ? ini : null;
+    }
+    if (cut !== null && stripPy(texto.slice(cut, rel[1]), WS_PY_ALL).length > 200) {
+      votos.push([cut, rel[1]]); votos.sort((x, y) => x[0] - y[0] || x[1] - y[1]); rel = [rel[0], cut];
+    }
+  }
   if (rel === null && votos.length) {
     const [a0, b0] = votos[0];
     const er = /(?<![a-z0-9])(?:e o (?:breve )?relatorio|e o que basta relatar|passo ao parecer|passo a opinar|passo a responder)(?![a-z0-9])/.exec(norm1(texto.slice(a0, b0)));
     if (er) { rel = [a0, a0 + er.index + er[0].length]; votos[0] = [a0 + er.index + er[0].length, b0]; }
   }
-  if (fecho && /ementa d[oa] rev\.|vencid[oa] [oa] relator|voto vencedor/.test(norm1(texto.slice(fecho[0], fecho[1]))) && outros.length
+  if (fecho && /parecer e ementa d[oa] rev(?:\.|isor)|vencid[oa] [oa] (?:rel\.|relator)|voto vencedor/.test(norm1(texto.slice(fecho[0], fecho[1]))) && outros.length
     && !marcas.some(([, k]) => k.includes("vencido"))) {
     const v = votos;
     votos = outros.map(([a, b]) => [a, b]); outros = v.map(([a, b]) => [a, b, "parecer do RELATOR VENCIDO"]);

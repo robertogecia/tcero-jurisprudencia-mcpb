@@ -139,6 +139,24 @@ export function negacaoEscopo(tn, ini0, fim, bruto = null) {
   return tiraEspacos(seg).split(" ").filter(Boolean).length >= NEGACAO_ALCANCE_MIN;
 }
 
+// NEGAÇÃO forte × distante (07/10/2026, gabarito cego e duplo neg-val2: 120 trechos novos, ponderado): negação colada ao trecho (até 1
+// palavra antes) ou existencial ("não há/houve/existe …", até 5) — precisão 80%, falso alarme 6%; o resto da regra larga vira
+// "NEGAÇÃO (distante)?" para não perder cobertura
+const RE_NEG_EXISTENCIAL = /^[ \t\n\r\f\v]*(?:ha|houve|havia|existe|existem|existia)(?![a-z0-9])/;
+/** _negacao_proxima */
+export function negacaoProxima(tn, ini0) {
+  const jan = tn.slice(Math.max(0, ini0 - NEGACAO_JANELA), ini0);
+  let op = null;
+  for (const m of jan.matchAll(RE_NEG_OPERADOR)) {
+    if (m[0] === "nao" && RE_NEG_FALSA.test(jan.slice(m.index + 3))) continue;
+    op = m;
+  }
+  if (op === null) return false;
+  const ponte = jan.slice(op.index + op[0].length);
+  const n = (ponte.match(/[^ \t\n\r\f\v]+/g) || []).length;
+  return n <= 1 || (n <= 5 && RE_NEG_EXISTENCIAL.test(ponte));
+}
+
 const ASPAS_SPAN_MAX = 6000;
 const ABRE_RETA = new Set([..." \t\n\r ([{—–-:/"]);
 const FECHA_RETA = new Set([..." \t\n\r .,;:)]}!?—–-/"]);
