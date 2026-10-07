@@ -82,7 +82,7 @@ function rodapeErro(mensagem) {
   iniciarChecagemVersao();
   if (L.estadoVersao.versaoNovaCache) {
     partes.push(
-      `Há versão nova (v${L.estadoVersao.versaoNovaCache}) e ela pode já corrigir este problema: ${L.RELEASES_PAGINA}`
+      `Há versão nova (v${L.estadoVersao.versaoNovaCache}) e ela pode já corrigir este problema.\nBaixar: ${L.PACOTE_MCPB_URL}\nDepois dê dois cliques no arquivo baixado e reinicie o Claude Desktop.`
     );
   }
   if (!L.SEM_RELATO_TIPOS.has(tipo)) {
