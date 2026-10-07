@@ -8,7 +8,7 @@
 // (que ficam em index.js). Isto é de propósito: a v1.2.0 (ranking/panorama) que vem depois deste
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
-import { norm1, negacaoEscopo, entreAspas, obiterAntes } from "./atribuicao13.js";
+import { norm1, negacaoEscopo, negacaoProxima, entreAspas, obiterAntes } from "./atribuicao13.js";
 import { posicaoTcero } from "./posicao2.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -30,7 +30,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.4.0";
+export const VERSAO = "1.5.0";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const ISSUES_NOVA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/issues/new";
@@ -709,9 +709,10 @@ export function alertasAtribuicao(alvoNorm, inicio, fim, bruto = null, fragmento
   }
   if (fx !== null) {
     if (negacaoEscopo(nt1, fx[0], fx[1], bruto))
-      alertas.push(
+      alertas.push(negacaoProxima(nt1, fx[0]) ?
         'NEGAÇÃO: há negação que alcança o trecho ("não"/"nem"/"sem razão"/"afasto"/"julgo improcedente"...), ' +
           "sem quebra de oração no meio — o recorte pode inverter o sentido do julgado. Não citar sem ler a frase inteira."
+        : "NEGAÇÃO (distante)?: há uma negativa algumas palavras antes do trecho, fora dele. Na maioria das vezes ela fecha a própria oração e não inverte o recorte (medido às cegas), mas leia a frase inteira antes de citar."
       );
   } else if (RE_NEGACAO_ANTES.test(antesNeg)) {
     alertas.push(

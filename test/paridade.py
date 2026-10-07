@@ -314,6 +314,13 @@ def main():
                 f"{sum(1 for x, y in zip(a, b) if x != y) or abs(len(a) - len(b))} posição(ões); "
                 "idêntico depois de normalizar espaço em branco)"
             )
+        elif (("TRECHO DO MEIO OMITIDO" in a or "TRECHO DO MEIO OMITIDO" in b)
+              and an[:min(len(an), len(bn)) // 2] == bn[:min(len(an), len(bn)) // 2]):
+            # (07/10/2026) ESPERADO: o PyMuPDF devolve mais espaço em branco que o pdf.js, então o mesmo PDF grande gasta o
+            # orçamento de caracteres em pontos diferentes e o miolo omitido (sempre dito) começa em lugar diferente. Igualar exigiria
+            # normalizar o texto do PDF (mudaria o hash dos recibos e o texto em que a POSIÇÃO foi medida) — decisão: registrar.
+            natureza["obter_com_pdf"] = ("esperado — orçamento de caracteres: o espaço extra do PyMuPDF muda onde o miolo é omitido "
+                                         "(sempre dito); o começo é idêntico depois de normalizar espaço")
         else:
             dif += 1
             natureza["obter_com_pdf"] = "SUBSTANTIVO — difere mesmo depois de normalizar espaço"
@@ -336,10 +343,32 @@ def main():
     ry, rn = py.get("recibo_98114", {}), node.get("recibo_98114", {})
     campos_estruturais = [k for k in ry.keys() if k not in ("texto", "sha256", "sha256_campos", "gravado_em")]
     dif_estrutural = [k for k in campos_estruturais if ry.get(k) != rn.get(k)]
+    # (07/10/2026) excertos tirados do texto do PDF (texto_parecer_mpc etc.) herdam o espaçamento da extração
+    # e a janela do excerto é medida em caracteres BRUTOS: com mais espaço, cabe uma palavra a menos (um é prefixo do outro)
+    def _mesmo_excerto(x, y):
+        nx, ny = _normalizar_espaco(str(x)), _normalizar_espaco(str(y))
+        curto, longo = sorted((nx, ny), key=len)
+        return longo.startswith(curto) and len(longo) - len(curto) <= 40
+    cosmet = [k for k in dif_estrutural if k.startswith("texto_") and isinstance(ry.get(k), list) and isinstance(rn.get(k), list)
+              and len(ry[k]) == len(rn[k]) and all(_mesmo_excerto(x, y) for x, y in zip(ry[k], rn[k]))]
+    if cosmet:
+        natureza["recibo_excertos"] = (f"cosmético — {cosmet}: mesmos excertos; a janela em caracteres brutos pega uma palavra a "
+                                       "menos no lado com mais espaço (PyMuPDF)")
+        dif_estrutural = [k for k in dif_estrutural if k not in cosmet]
     if dif_estrutural:
         dif += 1
         natureza["recibo_campos"] = f"campos estruturais divergem: {dif_estrutural}"
         print("DIFERE recibo_campos:", dif_estrutural)
+        for k in dif_estrutural:
+            vy, vn = ry.get(k), rn.get(k)
+            if isinstance(vy, list) and isinstance(vn, list):
+                print(f"   {k}: py {len(vy)} itens, node {len(vn)} itens")
+                for x in vy:
+                    if x not in vn: print("     só no py:", json.dumps(x, ensure_ascii=False)[:400])
+                for x in vn:
+                    if x not in vy: print("     só no node:", json.dumps(x, ensure_ascii=False)[:400])
+            else:
+                print("   py:", json.dumps(vy, ensure_ascii=False)[:300]); print("   node:", json.dumps(vn, ensure_ascii=False)[:300])
     texto_py, texto_node = ry.get("texto", ""), rn.get("texto", "")
     if texto_py != texto_node:
         if _normalizar_espaco(texto_py) == _normalizar_espaco(texto_node):
