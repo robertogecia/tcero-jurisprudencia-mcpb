@@ -30,9 +30,10 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.5.0";
+export const VERSAO = "1.5.1";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
+export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
 export const ISSUES_NOVA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/issues/new";
 
 export const CREDITO =
@@ -103,7 +104,7 @@ export const estadoVersao = { versaoNovaCache: null, tarefaIniciada: false };
 
 export function linhaAvisoVersao() {
   if (estadoVersao.versaoNovaCache) {
-    return `⬆️ Há versão nova (v${estadoVersao.versaoNovaCache}): ${RELEASES_PAGINA}`;
+    return `⬆️ Há versão nova desta extensão (v${estadoVersao.versaoNovaCache}; a instalada é a v${VERSAO}).\nBaixar: ${PACOTE_MCPB_URL}\nDepois dê dois cliques no arquivo baixado e reinicie o Claude Desktop. O que mudou: ${RELEASES_PAGINA}`;
   }
   return null;
 }
