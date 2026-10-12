@@ -568,3 +568,9 @@ test("orgaoDoFecho — sinônimos de grafia (Tribunal Pleno, Primeira/Segunda C�
     "órgãos DIFERENTES continuam null mesmo com sinônimo envolvido"
   );
 });
+
+test("estado do disjuntor: caminho absoluto de usuário, sem %20 nem barra antes da letra do drive (Windows)", async () => {
+  const m = await import("../server/lib.js");
+  assert.ok(path.isAbsolute(m.arquivoEstadoDisjuntor), m.arquivoEstadoDisjuntor);
+  assert.ok(!/%20|^[\\/][A-Za-z]:/.test(m.arquivoEstadoDisjuntor), m.arquivoEstadoDisjuntor);
+});

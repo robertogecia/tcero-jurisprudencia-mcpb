@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // --------------------------------------------------------------------------- //
 // Constantes do portal e de produto                                          //
@@ -30,7 +31,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.5.1";
+export const VERSAO = "1.5.2";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
@@ -1328,10 +1329,17 @@ const MAX_INCIDENTES = 20;
 const TRAVA_TIMEOUT_MS = 5000;
 const TRAVA_OBSOLETA_MS = 15000;
 
-export const arquivoEstadoDisjuntor = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
-  ".disjuntor_estado_tcero.json"
-);
+// Estado do disjuntor em pasta do USUÁRIO (escrita garantida) e caminho por fileURLToPath: no Windows, `new URL(import.meta.url).pathname`
+// dava "\\C:\\...\\Claude%20Extensions" e a trava nunca abria (relato do TRF1, 12/10/2026).
+function dirEstadoDisjuntor() {
+  const cand = [process.env.TCERO_MCP_DIR_ESTADO, path.join(os.homedir(), ".tcero-jurisprudencia"),
+                path.dirname(fileURLToPath(import.meta.url))].filter(Boolean);
+  for (const d of cand) {
+    try { fs.mkdirSync(d, { recursive: true, mode: 0o700 }); fs.accessSync(d, fs.constants.W_OK); return d; } catch { /* tenta o próximo */ }
+  }
+  return cand[cand.length - 1];
+}
+export const arquivoEstadoDisjuntor = path.join(dirEstadoDisjuntor(), ".disjuntor_estado_tcero.json");
 
 const ESTADO_PADRAO = {
   requisicoes: [],
