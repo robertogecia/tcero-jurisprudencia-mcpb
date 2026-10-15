@@ -26,6 +26,16 @@ o que você recebe em cada busca (decisões mais pertinentes primeiro, citação
 inteiro teor, conferência de citação, recibo), o que ela não substitui, e a tabela "algo deu
 errado".
 
+## O que há de novo na 1.6.0 (explicado para advogado)
+
+- **Achar o que você já leu, sem internet:** peça "procure nos recibos locais por *dano ao erário*". Ela olha só os acórdãos que já passaram por este computador (ementa, dispositivo e voto, quando o PDF foi lido). Resultado zero **não** quer dizer que o TCE-RO nunca decidiu o tema.
+- **Descobrir as palavras que o TCE-RO usa:** "sugira termos para *contratação temporária*" devolve de 10 a 20 palavras reais das ementas. Escolha 2 a 4 sinônimos; não cole a lista toda (piora o topo da busca).
+- **Ver o tema ano a ano:** "linha do tempo de *reincidência*" conta as decisões por ano e por Câmara/Pleno e mostra as duas mais pertinentes de cada ano. É contagem, não prova de mudança de entendimento.
+- **Triagem barata:** `obter_acordao_tcero` com `modo="triagem"` mostra estrutura, fecho e trechos marcados do PDF sem despejar o acórdão inteiro. Nunca serve para citar entre aspas.
+- **Alertas mais úteis:** agora dizem a frase do *obiter*, o título do voto de outro conselheiro e a página aproximada do PDF.
+- **Diagnóstico de erros:** "diagnóstico de erros do TCE-RO" resume as falhas registradas neste computador, sem nenhum dado do caso.
+- **Como atualizar:** quando aparecer o aviso de versão nova, diga "atualize a extensão do TCE-RO". O Claude primeiro só informa; se você disser que quer, ele baixa o arquivo para a pasta Downloads. Aí é com você: dois cliques no arquivo, **Instalar**, e reinicie o Claude. A extensão nunca se instala sozinha.
+
 ---
 
 # Jurisprudência TCE-RO (.mcpb)
@@ -233,3 +243,7 @@ Desktop instala a extensão em `.../Application Support/Claude/Claude Extensions
 (sem espaço) sempre funcionou, por isso o smoke test nunca pegou. Agora compara por `realpath`
 (`test/stdio_caminho_com_espaco.test.js` sobe o servidor de uma pasta com espaço e exige a resposta;
 falha no código antigo). Lição herdada do TJRO, que conecta sem guarda nenhuma.
+
+## v1.6.0 — 15/10/2026 (técnico)
+
+Ver `CHANGELOG.md`. Arquivos novos: `server/v160.js` (funções puras e disco local), `server/atualizar.js`, `server/fundo_vocabulario.json`. Testes: `test/v160.test.js`, `test/atualizar.test.js`; `test/paridade.py` compara os casos novos com o Python (mesmo texto de PDF nos dois lados para isolar o algoritmo; triagem com PDF classificada pela causa).

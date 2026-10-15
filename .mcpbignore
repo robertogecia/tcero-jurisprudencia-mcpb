@@ -1,1 +1,3 @@
 *.bak*
+test/fixtures/exp_C2_controle_or.json.gz
+test/

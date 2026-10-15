@@ -8,8 +8,8 @@
 // (que ficam em index.js). Isto é de propósito: a v1.2.0 (ranking/panorama) que vem depois deste
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
-import { norm1, negacaoEscopo, negacaoProxima, entreAspas, obiterAntes } from "./atribuicao13.js";
-import { posicaoTcero } from "./posicao2.js";
+import { norm1, negacaoEscopo, negacaoProxima, entreAspas, obiterAntesComPos } from "./atribuicao13.js";
+import { posicaoTcero, RE_PAGINA_TC } from "./posicao2.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +31,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.5.3";
+export const VERSAO = "1.6.0";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
@@ -103,9 +103,18 @@ export function versaoMaisNova(atual, outra) {
 // preenche `versaoNovaCache` (mesmo padrão do `_versao_nova_cache` do Python).
 export const estadoVersao = { versaoNovaCache: null, tarefaIniciada: false };
 
+// v1.6.0: mesma frase do Python (COMO_ATUALIZAR em servidor_tcero.py) — as duas instruções de atualização.
+export const COMO_ATUALIZAR =
+  "Atualizar: instalação pelo Python = `git pull` na pasta do servidor e reiniciar o Claude; " +
+  "instalação pelo Claude Desktop (.mcpb) = baixar o arquivo da versão nova na página de versões e " +
+  "dar dois cliques nele.";
+// Só do pacote Node: o atalho que baixa o arquivo (sem instalar).
+export const ATALHO_ATUALIZAR =
+  "Se preferir, peça ao Claude: «atualize a extensão do TCE-RO» (ele baixa o arquivo para a pasta Downloads; os dois cliques continuam sendo seus).";
+
 export function linhaAvisoVersao() {
   if (estadoVersao.versaoNovaCache) {
-    return `⬆️ Há versão nova desta extensão (v${estadoVersao.versaoNovaCache}; a instalada é a v${VERSAO}).\nBaixar: ${PACOTE_MCPB_URL}\nDepois dê dois cliques no arquivo baixado e reinicie o Claude Desktop. O que mudou: ${RELEASES_PAGINA}`;
+    return `⬆️ Há versão nova desta extensão (v${estadoVersao.versaoNovaCache}; a instalada é a v${VERSAO}).\nBaixar: ${PACOTE_MCPB_URL}\nDepois dê dois cliques no arquivo baixado e reinicie o Claude Desktop. O que mudou: ${RELEASES_PAGINA}. ${COMO_ATUALIZAR}\n${ATALHO_ATUALIZAR}`;
   }
   return null;
 }
@@ -680,7 +689,7 @@ const JANELA_ATRIBUICAO_CHARS = 200;
 // v1.3.0 (06/10/2026): regras do TJRO v1.13/1.16 pelo bloco compartilhado (cópia byte a byte do TRT14/TJSE/TRF1/OAB)
 const normalizarCasamentoN1 = (t) => (norm1(t).match(/[a-z0-9]+/g) || []).join(" ");
 const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-function faixaNorm(nt, fragmentos, pertoDe = 0.0) {
+export function faixaNorm(nt, fragmentos, pertoDe = 0.0) {
   const lista = fragmentos.map((f) => normalizarCasamentoN1(f).split(" ").filter(Boolean)).filter((ps) => ps.length);
   if (!lista.length) return null;
   const pad = (ps) => new RegExp("(?<![a-z0-9])" + ps.map(escRe).join("[^a-z0-9]+") + "(?![a-z0-9])", "g");
@@ -759,17 +768,55 @@ export function alertasAtribuicao(alvoNorm, inicio, fim, bruto = null, fragmento
     );
   }
   if (fx !== null && !entre && !alertas.some((a) => a.startsWith("TRANSCRIÇÃO") || a.startsWith("PARECER"))) {
-    const ob = obiterAntes(nt1, fx[0], fx[1], bruto);
+    const ob = obiterAntesComPos(nt1, fx[0], fx[1], bruto);
     if (ob)
-      alertas.push(`OBITER DICTUM?: o trecho vem sob «${ob}» — raciocínio hipotético ou fundamento alternativo; o resultado do julgado não dependeu dele. Vale como reforço, não como ratio decidendi; cite dizendo que é obiter.`);
+      alertas.push(
+        `OBITER DICTUM?: o trecho vem sob «${ob[0]}» — raciocínio hipotético ou fundamento alternativo; o resultado do julgado não dependeu dele. Vale como reforço, não como ratio decidendi; cite dizendo que é obiter.` +
+          fraseDoObiter(bruto, ob[1], ob[2], fx[0])
+      );
   }
   return alertas;
 }
 
+/** v1.6.0 (_frase_do_obiter): a frase onde está a marca de obiter, do começo da marca (com 40 caracteres antes) até o trecho; se a
+ * marca já está na cabeça do próprio trecho, diz isso. */
+export function fraseDoObiter(bruto, de, pos, ini0) {
+  if (pos >= ini0) return " A marca está no começo do próprio trecho citado.";
+  const ini = Math.max(de, pos - 40);
+  const f = bruto.slice(ini, ini0).replace(/[ \t\n\r\f\v]+/g, " ").trim();
+  return ` A frase: «${f.length > 260 ? f.slice(0, 260) + "…" : f}» + o trecho.`;
+}
+
+const RE_NUM_PAGINA_TC = /(?:(?<=\n)|(?<![\s\S]))[ \t]*(\d{1,4})[ \t]+de[ \t]+(\d{1,4})[ \t]*(?=\n|(?![\s\S]))/;
+
+/** v1.6.0 (_pagina_pdf_tcero): página APROXIMADA do PDF em que cai a posição `pos` do texto bruto ("p. ~7 de 23 do PDF"), lida do
+ * cabeçalho de página que o TCE-RO repete em toda folha ("N de M"). Vazia antes do primeiro cabeçalho ou sem cabeçalhos. */
+export function paginaPdfTcero(bruto, pos) {
+  if (!bruto || pos < 0) return "";
+  let ultima = null;
+  for (const m of bruto.matchAll(RE_PAGINA_TC)) {
+    if (m.index > pos) break;
+    const mn = RE_NUM_PAGINA_TC.exec(m[0]);
+    if (mn) ultima = [parseInt(mn[1], 10), parseInt(mn[2], 10)];
+  }
+  return ultima ? `p. ~${ultima[0]} de ${ultima[1]} do PDF` : "";
+}
+
+/** espelho de _meio_do_trecho */
+function meioDoTrecho(texto, alvo, inicio, fragmentos) {
+  const fx = texto ? faixaNorm(norm1(texto), fragmentos, inicio / Math.max(1, alvo.length)) : null;
+  return fx ? Math.floor((fx[0] + fx[1]) / 2) : null;
+}
+
 /** espelho de _posicao_tcero_trecho: o trecho localizado em norm1(texto) perto do casamento oficial. */
 function posicaoTceroTrecho(texto, alvo, inicio, fragmentos) {
-  const fx = texto ? faixaNorm(norm1(texto), fragmentos, inicio / Math.max(1, alvo.length)) : null;
-  return fx ? posicaoTcero(texto, Math.floor((fx[0] + fx[1]) / 2)) : "";
+  const meio = meioDoTrecho(texto, alvo, inicio, fragmentos);
+  return meio !== null ? posicaoTcero(texto, meio) : "";
+}
+
+function paginaDoTrecho(texto, alvo, inicio, fragmentos) {
+  const meio = meioDoTrecho(texto, alvo, inicio, fragmentos);
+  return meio !== null ? paginaPdfTcero(texto, meio) : "";
 }
 
 export function verificarTrecho(textos, trecho) {
@@ -824,6 +871,7 @@ export function verificarTrecho(textos, trecho) {
         motivo: `trecho encontrado literalmente em: ${nome}`,
         alertas: alertasAtribuicao(alvo, inicio, fim, texto, fragmentos),
         posicao: posicaoTceroTrecho(texto, alvo, inicio, fragmentos),
+        pagina: paginaDoTrecho(texto, alvo, inicio, fragmentos),
       };
     }
     faltandoPorTexto[nome] = faltando;
@@ -858,7 +906,7 @@ export function verificarTrecho(textos, trecho) {
 // --------------------------------------------------------------------------- //
 // Recibo de custódia                                                          //
 // --------------------------------------------------------------------------- //
-const RE_ID_DECISAO_SEGURO = /^[0-9]+$/;
+export const RE_ID_DECISAO_SEGURO = /^[0-9]+$/;
 
 export function caminhoReciboTcero(idDecisao) {
   const idTxt = String(idDecisao ?? "").trim();
@@ -929,13 +977,13 @@ export function lerReciboTcero(idDecisao) {
   return dados;
 }
 
-const RE_TRANSCRICAO_RAW = /\b(STF|STJ|TCU|Tribunal de Contas da Uni[ãa]o|S[úu]mula|Tema\s+\d|conforme decidiu|in verbis)\b/gi;
-const RE_ALEGACAO_RAW =
+export const RE_TRANSCRICAO_RAW = /\b(STF|STJ|TCU|Tribunal de Contas da Uni[ãa]o|S[úu]mula|Tema\s+\d|conforme decidiu|in verbis)\b/gi;
+export const RE_ALEGACAO_RAW =
   /\b(alega\w*|alegou|aduz\w*|sustent(?:a|am|ou|aram|ando)|argument(?:a|am|ou|aram|ando)|defende|defendem|defendeu|defendente|a defesa|em suas raz[õo]es|em sede de justificativas?)\b/gi;
-const RE_PARECER_MPC_RAW =
+export const RE_PARECER_MPC_RAW =
   /\b(Minist[ée]rio P[úu]blico de Contas|MPC|Procurador\w*|parecer|corpo t[ée]cnico|unidade t[ée]cnica|Secretaria[- ]Geral de Controle Externo|SGCE|relat[óo]rio t[ée]cnico|opinou|manifestou-?se)\b/gi;
-const RE_DIVERGENCIA_RAW = /pe[çc]o v[êe]nia para divergir|voto vencido|voto-vista|divirjo do/gi;
-const JANELA_EXCERTO_RAW = 320;
+export const RE_DIVERGENCIA_RAW = /pe[çc]o v[êe]nia para divergir|voto vencido|voto-vista|divirjo do/gi;
+export const JANELA_EXCERTO_RAW = 320;
 const TETO_EXCERTOS_POR_CAMPO = 40;
 
 const RE_FIM_FRASE =
@@ -951,6 +999,11 @@ function fimDaVoz(texto, ini, janela) {
 }
 
 export function excertosRaw(texto, regex, janela = JANELA_EXCERTO_RAW, teto = TETO_EXCERTOS_POR_CAMPO) {
+  return excertosRawComPos(texto, regex, janela, teto).map(([, exc]) => exc);
+}
+
+/** v1.6.0 (_excertos_raw_com_pos): os mesmos excertos, com a posição de início no texto bruto — [[posição, excerto], ...]. */
+export function excertosRawComPos(texto, regex, janela = JANELA_EXCERTO_RAW, teto = TETO_EXCERTOS_POR_CAMPO) {
   if (!texto) return [];
   const linhas = texto.split("\n");
   const contagem = {};
@@ -985,7 +1038,7 @@ export function excertosRaw(texto, regex, janela = JANELA_EXCERTO_RAW, teto = TE
       continue;
     }
     vistosTxt.add(exc);
-    saida.push(exc);
+    saida.push([ini, exc]);
     if (saida.length >= teto) break;
     if (m[0].length === 0) re.lastIndex++;
   }
@@ -1078,7 +1131,7 @@ export function orgaoDoFecho(texto) {
 // --------------------------------------------------------------------------- //
 // `grupos` — E entre grupos, OU dentro do grupo, filtrado NO CLIENTE          //
 // --------------------------------------------------------------------------- //
-const RE_ESPACO = /\s+/g;
+export const RE_ESPACO = /\s+/g;
 
 export function gruposValidos(grupos) {
   if (!grupos || !Array.isArray(grupos)) return [];
@@ -1166,11 +1219,11 @@ export function filtrarPorGrupos(resultados, grupos) {
 // sigla, natureza, top-5 relatores) que entra no fim da página 1 com 3+       //
 // decisões.                                                                   //
 // --------------------------------------------------------------------------- //
-const RE_FRASE_ASPAS = /["“”]([^"“”]+)["“”]/g;
-const RE_PONTA_NAO_PALAVRA = /^[^\w]+|[^\w]+$/g;
+export const RE_FRASE_ASPAS = /["“”]([^"“”]+)["“”]/g;
+export const RE_PONTA_NAO_PALAVRA = /^[^\w]+|[^\w]+$/g;
 // Lista EXATA do Python (`_PALAVRAS_VAZIAS_RELEVANCIA`) — já em forma "fold" (sem acento), porque
 // `fold()` também remove acento antes de comparar.
-const PALAVRAS_VAZIAS_RELEVANCIA = new Set(
+export const PALAVRAS_VAZIAS_RELEVANCIA = new Set(
   "a o as os e em no na nos nas de da do das dos ao aos um uma uns umas para pra por pelo pela pelos pelas com sem que se ou nao sob sobre entre ate apos".split(
     " "
   )
@@ -1260,7 +1313,7 @@ function contarTop(mapa) {
 // Valor de faceta sempre como texto (red team 22/09/2026-b, achado 4: um `orgaoJulgador` em
 // lista derrubava a busca inteira — em Python porque Counter não aceita lista como chave; aqui
 // porque Map usaria a lista inteira, por identidade, como chave distinta a cada nova instância).
-function campoPanorama(v) {
+export function campoPanorama(v) {
   if (v === null || v === undefined) return "";
   if (Array.isArray(v)) v = v.filter((x) => x !== null && x !== undefined).join(", ");
   return String(v).replace(RE_ESPACO, " ").trim();
@@ -1606,11 +1659,62 @@ export function linhasVerificacaoItem(s, trecho, textos) {
       linhas.push(`   ⚠️ trecho literal, porém atribuído a outra voz — conferir se é a posição da Corte: ${a}`);
     }
   }
-  if (r.valido && r.posicao) linhas.push(`   ℹ POSIÇÃO NO JULGADO: ${r.posicao}.`);
+  if (r.valido && r.posicao) linhas.push(`   ℹ POSIÇÃO NO JULGADO: ${r.posicao}${r.pagina ? ` (${r.pagina})` : ""}.`);
   if (!r.valido && r.faltando && r.faltando.length) {
     for (const f of r.faltando.slice(0, 3)) {
       linhas.push(`   fragmento sem correspondência: «${umaLinha(f).slice(0, 160)}»`);
     }
   }
   return linhas;
+}
+
+// --------------------------------------------------------------------------- //
+// Relato de erro (movido de index.js na v1.6.0: o diário de erros também usa)  //
+// --------------------------------------------------------------------------- //
+export function linkRelato(tipo, agora = Date.now()) {
+  let estadoTxt;
+  try {
+    const e = lerEstado();
+    const inc = e.incidentes || [];
+    const tipos = inc.slice(-5).map((i) => i.operacao || "sem_tipo").join(", ") || "nenhum";
+    const recentes = (e.requisicoes || []).filter((t) => agora - t <= 60000).length;
+    estadoTxt =
+      `- Nível do limitador: ${e.indiceJanela + 1} de ${ESCADA_JANELA_MS.length}\n` +
+      `- Consultas no último minuto: ${recentes}\n` +
+      `- Bloqueios registrados: ${inc.length} (últimas operações: ${tipos})\n`;
+  } catch {
+    estadoTxt = "- Estado do limitador: indisponível\n";
+  }
+  const titulo = `Erro ${tipo} na v${VERSAO}`;
+  const corpo =
+    "**Relato gerado pela extensão** (revise antes de enviar; não inclua nome de parte, " +
+    "número de processo nem o texto da sua busca — issues são públicas)\n\n" +
+    `- Versão: ${VERSAO}\n- Sistema: ${process.platform} ${process.version}\n` +
+    `- Tipo do erro: ${tipo}\n${estadoTxt}` +
+    "\n**O que eu estava fazendo:** \n\n" +
+    "**A pesquisa funciona direto no portal (papyrus.tcero.tc.br), pelo navegador?** sim / não\n\n" +
+    "**Desde quando acontece?** \n";
+  return `${ISSUES_NOVA}?title=${encodeURIComponent(titulo)}&body=${encodeURIComponent(corpo)}`;
+}
+
+export function estadoLimitadorResumo(agora = Date.now()) {
+  const e = lerEstado();
+  const situacao = agora < e.bloqueadoAte ? "BLOQUEADO" : "livre";
+  return `nível ${e.indiceJanela + 1}/${ESCADA_JANELA_MS.length}, ${situacao}`;
+}
+
+// Erro de ENTRADA do usuário (equivale ao ValueError do Python): a mensagem sai sem o rodapé de erro de portal e não entra no diário.
+export class ErroEntrada extends Error {}
+
+export function resolverOrgao(orgao) {
+  const alvo = fold(orgao);
+  for (const conhecido of ORGAOS_JULGADORES_CONHECIDOS) {
+    if (fold(conhecido) === alvo) return [conhecido, null];
+  }
+  return [
+    orgao,
+    `orgao_julgador ${pyRepr(orgao)} não é um dos ${pyRepr(ORGAOS_JULGADORES_CONHECIDOS)} (única lista ` +
+      "encontrada, hardcoded no frontend do portal — não há endpoint de descoberta); a busca " +
+      "exige o valor EXATO — se vier zero resultado, é provável que seja isso",
+  ];
 }

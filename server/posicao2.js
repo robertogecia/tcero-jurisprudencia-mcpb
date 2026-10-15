@@ -1,6 +1,6 @@
 // POSIÇÃO NO JULGADO (06/10/2026) para TRT14, TCE-RO, TED-OAB/SP e TNU — espelho de _posicao_generica + _posicao_trt14 /
 // _posicao_tcero / _posicao_ted / _posicao_tnu dos servidores Python. Arquivo IDÊNTICO nas quatro extensões (como atribuicao13.js);
-// a fonte é a do TRT14. Localizador, não juiz: diz onde a frase está; ratio × dictum continua sendo de quem lê.
+// a fonte é a do TRT14 (exceção v1.6.0, 15/10/2026: só o ramo TCE-RO muda aqui — título do voto de outro conselheiro e export de RE_CAB_TC/RE_PAGINA_TC; os demais ramos seguem idênticos). Localizador, não juiz: diz onde a frase está; ratio × dictum continua sendo de quem lê.
 // Regex sem a flag `u` (\b e \d ASCII, como o re.ASCII do Python). O `^`/`$` multilinha do Python só olha "\n"; o do JS também
 // para em "\r" — por isso as âncoras de linha vão explícitas (INI / FIM).
 import { norm1 } from "./atribuicao13.js";
@@ -126,12 +126,12 @@ export function posicaoTrt14(bruto, meio) {
 }
 
 // ---------------------------------------------------------------- TCE-RO
-const RE_CAB_TC = new RegExp(`${INI}[ \\t]*(?:[IVX]{1,4}[ \\t]*[–.-]+[ \\t]*)?(?:D[OA][ \\t]+)?(EMENTA|AC[ÓO]RD[ÃA]O|RELAT[ÓO]RIO|VOTO|PROPOSTA DE DECIS[ÃA]O`
+export const RE_CAB_TC = new RegExp(`${INI}[ \\t]*(?:[IVX]{1,4}[ \\t]*[–.-]+[ \\t]*)?(?:D[OA][ \\t]+)?(EMENTA|AC[ÓO]RD[ÃA]O|RELAT[ÓO]RIO|VOTO|PROPOSTA DE DECIS[ÃA]O`
   + `|FUNDAMENTA[ÇC][ÃA]O|FUNDAMENTOS|DISPOSITIVO)\\b([^\\n]{0,70})${FIM}`, "g");
 const RE_AUTUACAO_TC = new RegExp(`${INI}[ \\t]*(?:PROCESSO|ASSUNTO|JURISDICIONAD|INTERESSAD|RESPONS[ÁA]VE|ADVOGAD|UNIDADE|RELATOR|SESS[ÃA]O|GRUPO`
   + `|EMBARGANTE|EMBARGAD|RECORRENTE|RECORRID|REQUERENTE|CATEGORIA|SUBCATEGORIA|EXERC[ÍI]CIO|PROCURADOR|IMPETRANTE|REPRESENTANTE`
   + `|REPRESENTAD|ORIGEM|NATUREZA)\\b[^\\n]*${FIM}`, "g");
-const RE_PAGINA_TC = /TRIBUNAL DE CONTAS DO ESTADO DE ROND[ÔO]NIA[ \t]*\n(?:[^\n]*\n){0,9}?[^\n]*(?:Proc\.?[ \t]*:[^\n]*|\d+[ \t]+de[ \t]+\d+[ \t]*)\n|TRIBUNAL DE CONTAS DO ESTADO DE ROND[ÔO]NIA[ \t]*\n[^\n]*\n?[ \t]*D[^\n]{0,6}-SPJ[^\n]*\n(?:[^\n]*Ac[óo]rd[ãa]o[^\n]*\n)?/g;
+export const RE_PAGINA_TC = /TRIBUNAL DE CONTAS DO ESTADO DE ROND[ÔO]NIA[ \t]*\n(?:[^\n]*\n){0,9}?[^\n]*(?:Proc\.?[ \t]*:[^\n]*|\d+[ \t]+de[ \t]+\d+[ \t]*)\n|TRIBUNAL DE CONTAS DO ESTADO DE ROND[ÔO]NIA[ \t]*\n[^\n]*\n?[ \t]*D[^\n]{0,6}-SPJ[^\n]*\n(?:[^\n]*Ac[óo]rd[ãa]o[^\n]*\n)?/g;
 const RE_RESULTADO_TC = /(?<![a-z0-9])(?:convergindo|acolh\w*|submeto|proponho|propoe-se|decido|voto (?:no sentido|pelo|por)|e como voto|considerar (?:legal|ilegal|regular|irregular|cumprid)|julgar (?:regular|irregular|legal|ilegal)|determinar)/;
 const NAO_NOME_TC = new Set(["conselheiro", "conselheira", "substituto", "substituta", "relator", "relatora", "vista", "voto", "retificado", "proposta", "decisao", "de", "da", "do", "dos", "das"]);
 const sobrenTc = (x) => (norm1(x).match(/[a-z]{3,}/g) || []).filter((w) => !NAO_NOME_TC.has(w));
@@ -181,7 +181,9 @@ export function posicaoTcero(bruto, meio) {
   const relSeg = (segs.find(([a, b, d]) => d === "relatorio" && a <= meio && meio < b) || segs.find(([, , d]) => d === "relatorio") || null);
   const rs = relSeg ? [relSeg[0], relSeg[1]] : null;
   const votos = segs.filter(([, , d]) => d === "relator").map(([a, b]) => [a, b]);
-  const outros = segs.filter(([, , d]) => d === "outro").map(([a, b]) => [a, b, "VOTO de outro conselheiro"]);
+  // v1.6.0: o título do voto (linha do cabeçalho) diz de QUEM é e onde ele começa
+  const tituloVoto = (p) => { const k = bruto.indexOf("\n", p); return bruto.slice(p, k >= 0 ? k : n).replace(/[ \t\n\r\f\v]+/g, " ").trim().slice(0, 80); };
+  const outros = segs.filter(([, , d]) => d === "outro").map(([a, b]) => [a, b, `VOTO de outro conselheiro (título: «${tituloVoto(a)}»)`]);
   const rel = rs ? rs[0] : -1;
   const voto = votos.length ? votos[0][0] : -1;
   const tnAll = norm1(bruto);

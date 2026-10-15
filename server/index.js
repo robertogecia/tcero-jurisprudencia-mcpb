@@ -16,6 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as L from "./lib.js";
+import * as V from "./v160.js";
+import { baixarAtualizacao, textoAtualizacao, ErroAtualizacao } from "./atualizar.js";
 
 // --------------------------------------------------------------------------- //
 // Checagem de versão nova — dispara em 2º plano, nunca aguardada.             //
@@ -50,64 +52,34 @@ function iniciarChecagemVersao() {
     .catch(() => {});
 }
 
-function linkRelato(tipo, agora = Date.now()) {
-  let estadoTxt;
-  try {
-    const e = L.lerEstado();
-    const inc = e.incidentes || [];
-    const tipos = inc.slice(-5).map((i) => i.operacao || "sem_tipo").join(", ") || "nenhum";
-    const recentes = (e.requisicoes || []).filter((t) => agora - t <= 60000).length;
-    estadoTxt =
-      `- Nível do limitador: ${e.indiceJanela + 1} de ${L.ESCADA_JANELA_MS.length}\n` +
-      `- Consultas no último minuto: ${recentes}\n` +
-      `- Bloqueios registrados: ${inc.length} (últimas operações: ${tipos})\n`;
-  } catch {
-    estadoTxt = "- Estado do limitador: indisponível\n";
-  }
-  const titulo = `Erro ${tipo} na v${L.VERSAO}`;
-  const corpo =
-    "**Relato gerado pela extensão** (revise antes de enviar; não inclua nome de parte, " +
-    "número de processo nem o texto da sua busca — issues são públicas)\n\n" +
-    `- Versão: ${L.VERSAO}\n- Sistema: ${process.platform} ${process.version}\n` +
-    `- Tipo do erro: ${tipo}\n${estadoTxt}` +
-    "\n**O que eu estava fazendo:** \n\n" +
-    "**A pesquisa funciona direto no portal (papyrus.tcero.tc.br), pelo navegador?** sim / não\n\n" +
-    "**Desde quando acontece?** \n";
-  return `${L.ISSUES_NOVA}?title=${encodeURIComponent(titulo)}&body=${encodeURIComponent(corpo)}`;
-}
-
 function rodapeErro(mensagem) {
   const tipo = L.tipoDoErro(mensagem);
   const partes = [
     `\n\nVersão: ${L.VERSAO} · Sistema: ${process.platform} ${process.version} · ` +
-      `Limitador: ${estadoLimitadorResumo()}`,
+      `Limitador: ${L.estadoLimitadorResumo()}`,
   ];
   iniciarChecagemVersao();
   if (L.estadoVersao.versaoNovaCache) {
     partes.push(
-      `Há versão nova (v${L.estadoVersao.versaoNovaCache}) e ela pode já corrigir este problema.\nBaixar: ${L.PACOTE_MCPB_URL}\nDepois dê dois cliques no arquivo baixado e reinicie o Claude Desktop.`
+      `Há versão nova (v${L.estadoVersao.versaoNovaCache}) e ela pode já corrigir este problema.\nBaixar: ${L.PACOTE_MCPB_URL}\nDepois dê dois cliques no arquivo baixado e reinicie o Claude Desktop. ${L.COMO_ATUALIZAR}\n${L.ATALHO_ATUALIZAR}`
     );
   }
   if (!L.SEM_RELATO_TIPOS.has(tipo)) {
     const sufixo = L.estadoVersao.versaoNovaCache ? " (depois de atualizar, se houver versão nova)" : "";
     partes.push(
-      `Se o problema continuar${sufixo}, relate ao autor em ${linkRelato(tipo)} informando ` +
+      `Se o problema continuar${sufixo}, relate ao autor em ${L.linkRelato(tipo)} informando ` +
         "a versão, o sistema e esta mensagem."
     );
   }
   return partes.join("\n");
 }
 
-function estadoLimitadorResumo(agora = Date.now()) {
-  const e = L.lerEstado();
-  const situacao = agora < e.bloqueadoAte ? "BLOQUEADO" : "livre";
-  return `nível ${e.indiceJanela + 1}/${L.ESCADA_JANELA_MS.length}, ${situacao}`;
-}
-
 class PortalRecusou extends Error {}
 
 function formatarErroPortal(e, prefixo) {
   const msg = `${prefixo}: ${e.message || e}`;
+  // Como no Python: erro de ENTRADA do usuário (ValueError) sai sem o rodapé de erro de portal.
+  if (e instanceof L.ErroEntrada) return msg;
   if (e instanceof PortalRecusou || e instanceof Error) {
     return msg + rodapeErro(String(e.message || e));
   }
@@ -202,7 +174,7 @@ function cacheGravar(chave, dados, tamanho = 0) {
 
 async function consultarApi(params, operacao) {
   if (!params || !Object.entries(params).some(([k, v]) => k !== "filtrarResultados" && L.texto(v))) {
-    throw new Error(
+    throw new L.ErroEntrada(
       "consulta sem nenhum filtro preenchido — o portal do TCE-RO devolveria o acervo " +
         "inteiro (múltiplos MB). Informe número, id, relator, órgão ou texto livre."
     );
@@ -452,6 +424,27 @@ function chaveCachePdfSemCrypto(s, link) {
   return `link:${Buffer.from(link).toString("base64")}`;
 }
 
+// v1.6.0: baixa (ou pega do cache) e extrai o PDF de `s`, sem formatar o texto: [resultado, aviso]. Mesmo caminho de lerInteiroTeorPdf
+// (mesmas travas, mesmo cache), então textoPdfParaRecibo depois reaproveita o cache e o recibo gravado é idêntico ao do modo completo.
+async function pdfParaTriagem(s) {
+  const link = L.corrigirLinkPdf(s.linkArquivo || "");
+  if (!link) return [null, "**Do PDF:** este acórdão não tem `linkArquivo` informado pelo portal."];
+  const chave = chaveCachePdfSemCrypto(s, link);
+  const emCache = cachePdfLer(chave);
+  if (emCache !== null) return [emCache, null];
+  let conteudo;
+  try {
+    conteudo = await _baixarPdfImpl(link);
+  } catch (e) {
+    if (e instanceof L.LeituraPdfFalhou) return [null, `[LEITURA DE PDF NÃO REALIZADA — ${e.message}]`];
+    return [null, `[LEITURA DE PDF NÃO REALIZADA — falha inesperada (${e?.constructor?.name || "Error"}: ${e?.message})]`];
+  }
+  const resultado = await extrairTextoPdf(conteudo);
+  if (resultado.erro) return [null, `[LEITURA DE PDF NÃO REALIZADA — falha ao ler o PDF (${resultado.erro})]`];
+  cachePdfGravar(chave, resultado);
+  return [resultado, null];
+}
+
 async function textoPdfParaRecibo(s) {
   const link = L.corrigirLinkPdf(s.linkArquivo || "");
   if (!link) return [null, null];
@@ -493,7 +486,7 @@ async function relatoresConhecidos(operacao) {
   }
 }
 
-class FiltroAmbiguo extends Error {}
+class FiltroAmbiguo extends L.ErroEntrada {}
 
 async function resolverRelator(relator, operacao) {
   const alvo = L.fold(relator);
@@ -534,19 +527,6 @@ async function resolverRelator(relator, operacao) {
   ];
 }
 
-function resolverOrgao(orgao) {
-  const alvo = L.fold(orgao);
-  for (const conhecido of L.ORGAOS_JULGADORES_CONHECIDOS) {
-    if (L.fold(conhecido) === alvo) return [conhecido, null];
-  }
-  return [
-    orgao,
-    `orgao_julgador ${L.pyRepr(orgao)} não é um dos ${L.pyRepr(L.ORGAOS_JULGADORES_CONHECIDOS)} (única lista ` +
-      "encontrada, hardcoded no frontend do portal — não há endpoint de descoberta); a busca " +
-      "exige o valor EXATO — se vier zero resultado, é provável que seja isso",
-  ];
-}
-
 // --------------------------------------------------------------------------- //
 // Implementação das ferramentas                                               //
 // --------------------------------------------------------------------------- //
@@ -575,7 +555,7 @@ async function buscar(textoLivre, numeroAcordao, numeroProcesso, relator, orgaoJ
     pagina = Math.max(1, parseInt(pagina, 10) || 1);
     porPagina = parseInt(porPagina, 10) || L.POR_PAGINA_PADRAO;
     if (!(porPagina >= 1 && porPagina <= L.POR_PAGINA_MAX)) {
-      throw new Error(`por_pagina inválido: ${porPagina}; use de 1 a ${L.POR_PAGINA_MAX}`);
+      throw new L.ErroEntrada(`por_pagina inválido: ${porPagina}; use de 1 a ${L.POR_PAGINA_MAX}`);
     }
     if (detalhar && porPagina > L.TETO_DETALHAR_NA_BUSCA) {
       avisos.push(
@@ -592,7 +572,7 @@ async function buscar(textoLivre, numeroAcordao, numeroProcesso, relator, orgaoJ
       }
     }
     if (L.texto(orgaoJulgador)) {
-      const [nomeO, avisoO] = resolverOrgao(L.texto(orgaoJulgador));
+      const [nomeO, avisoO] = L.resolverOrgao(L.texto(orgaoJulgador));
       params.orgaosJulgadores = nomeO;
       if (avisoO) {
         avisos.push(avisoO);
@@ -719,7 +699,10 @@ async function buscar(textoLivre, numeroAcordao, numeroProcesso, relator, orgaoJ
   return L.cortarBloco(linhas, L.ORCAMENTO_SAIDA, "resposta da busca").join("\n");
 }
 
-async function obterAcordao(idDecisao, numeroAcordao, numeroProcesso, lerInteiroTeor) {
+async function obterAcordao(idDecisao, numeroAcordao, numeroProcesso, lerInteiroTeor, modo = "completo") {
+  if (modo !== "completo" && modo !== "triagem") {
+    return `modo inválido: ${L.pyRepr(modo)}; use 'completo' ou 'triagem'. Nenhuma requisição foi feita.`;
+  }
   const idTxt = L.texto(idDecisao);
   const acTxt = L.texto(numeroAcordao);
   const procTxt = L.texto(numeroProcesso);
@@ -768,6 +751,23 @@ async function obterAcordao(idDecisao, numeroAcordao, numeroProcesso, lerInteiro
     linhas.push("\nChame de novo com obter_acordao_tcero(id_decisao=<id acima>) para o detalhe de cada um. Mostrando o primeiro:");
   }
   const s0 = resultados[0].source || {};
+  if (modo === "triagem") {
+    // v1.6.0: leitura barata. O recibo gravado é EXATAMENTE o que o modo completo gravaria (mesmo caminho de
+    // download/cache e mesmas chamadas): a triagem não rebaixa nem promove a verificação.
+    let resultadoPdf = null;
+    let avisoPdf = null;
+    let brutoPdf = null;
+    if (lerInteiroTeor) {
+      [resultadoPdf, avisoPdf] = await pdfParaTriagem(s0);
+      const [textoPdf, pdfCompleto] = await textoPdfParaRecibo(s0);
+      L.gravarReciboTcero(s0, { textoPdf, textoPdfCompleto: pdfCompleto, gravadoEm: agoraIso() });
+      brutoPdf = resultadoPdf !== null ? V.textoDoRecibo(s0, textoPdf) : null;
+    } else {
+      L.gravarReciboTcero(s0, { gravadoEm: agoraIso() });
+    }
+    linhas.push(...V.triagemDecisao(s0, brutoPdf, resultadoPdf, avisoPdf));
+    return L.cortarBloco(linhas, L.ORCAMENTO_SAIDA, "triagem de obter_acordao").join("\n");
+  }
   linhas.push(...L.detalheItem(s0));
   if (lerInteiroTeor) {
     const RESERVA_BLOCO_PDF = 1500;
@@ -873,6 +873,74 @@ async function verificarCitacao(idDecisao, numeroAcordao, trecho) {
 }
 
 // --------------------------------------------------------------------------- //
+// v1.6.0 — consulta compartilhada por linha_do_tempo_tcero e sugerir_termos_tcero                //
+// --------------------------------------------------------------------------- //
+// UMA consulta à API, com os mesmos parâmetros que `buscar` monta (então a resposta cacheada de uma busca anterior idêntica é reaproveitada,
+// sem requisição extra), e o mesmo filtro de `grupos` no cliente. Levanta como `buscar`; quem chama formata.
+async function consultaFiltrada(textoLivre, grupos, relator, orgaoJulgador, operacao) {
+  const avisos = [];
+  const gruposOk = L.gruposValidos(grupos);
+  const params = {};
+  const tlc = L.montarTextoLivreComGrupos(textoLivre || "", gruposOk);
+  if (tlc) params.textoLivre = tlc;
+  if (!Object.keys(params).length && !L.texto(relator) && !L.texto(orgaoJulgador)) {
+    throw new L.ErroEntrada(
+      "Informe pelo menos um critério: texto_livre, grupos, relator ou orgao_julgador. " + "Uma consulta sem nenhum filtro devolveria o acervo inteiro."
+    );
+  }
+  if (L.texto(relator)) {
+    const [nome, aviso] = await resolverRelator(L.texto(relator), operacao);
+    params.relatores = nome;
+    if (aviso) avisos.push(aviso);
+  }
+  if (L.texto(orgaoJulgador)) {
+    const [nomeO, avisoO] = L.resolverOrgao(L.texto(orgaoJulgador));
+    params.orgaosJulgadores = nomeO;
+    if (avisoO) avisos.push(avisoO);
+  }
+  const dados = await _consultarApiImpl(params, operacao);
+  const brutos = dados.result || [];
+  let todos, avisosIa;
+  if (gruposOk.length) [todos, avisosIa] = L.filtrarPorGrupos(brutos, gruposOk);
+  else [todos, avisosIa] = [brutos, {}];
+  return { todos, brutos, total_bruto: brutos.length, avisos, avisos_ia: avisosIa, grupos_ok: gruposOk, params };
+}
+
+// Como o Python: erro de entrada/portal/runtime → "Erro na consulta ao TCE-RO"; qualquer outro → com o nome da classe.
+function erroDaConsulta(e) {
+  if (e instanceof PortalRecusou || e instanceof L.ErroEntrada || e?.constructor === Error) return formatarErroPortal(e, "Erro na consulta ao TCE-RO");
+  return formatarErroPortal(e, `Erro ao consultar o portal do TCE-RO (${e?.constructor?.name || "Error"})`);
+}
+
+async function linhaDoTempoAsync(textoLivre, grupos, relator, orgaoJulgador, anoInicio, anoFim) {
+  const v = V.validarAnos(anoInicio, anoFim);
+  if (v.erro) return v.erro;
+  let r;
+  try {
+    r = await consultaFiltrada(textoLivre, grupos, relator, orgaoJulgador, "linha_do_tempo");
+  } catch (e) {
+    return erroDaConsulta(e);
+  }
+  const termos = L.termosDaConsulta(textoLivre, r.grupos_ok);
+  const filtros = L.truncar(Object.entries(r.params).map(([k, x]) => `${k}=${x}`).join("; "), 300);
+  let linhas;
+  if (r.todos.length) linhas = V.linhaDoTempo(r.todos, termos, v.ai, v.af, filtros, r.grupos_ok.length ? r.total_bruto : null);
+  else linhas = [`**Linha do tempo por ano — 0 decisão(ões)** para \`${filtros}\`.`];
+  for (const a of r.avisos) linhas.splice(1, 0, `⚠️ ${a}`);
+  return L.cortarBloco(linhas, L.ORCAMENTO_SAIDA, "resposta da linha do tempo").join("\n");
+}
+
+async function sugerirTermosAsync(textoLivre, grupos) {
+  let r;
+  try {
+    r = await consultaFiltrada(textoLivre, grupos, null, null, "sugerir_termos");
+  } catch (e) {
+    return erroDaConsulta(e);
+  }
+  return V.textoSugerirTermos(textoLivre, r);
+}
+
+// --------------------------------------------------------------------------- //
 // MCP server                                                                   //
 // --------------------------------------------------------------------------- //
 const server = new McpServer({ name: "Jurisprudência TCE-RO", version: L.VERSAO });
@@ -930,17 +998,26 @@ server.registerTool(
   },
   async (a) => {
     try {
-      const texto = await buscar(
-        a.texto_livre ?? "",
-        a.numero_acordao ?? null,
-        a.numero_processo ?? null,
-        a.relator ?? null,
-        a.orgao_julgador ?? null,
-        a.pagina ?? 1,
-        a.por_pagina ?? L.POR_PAGINA_PADRAO,
-        !!a.detalhar,
-        a.grupos ?? null,
-        a.ordenar ?? "relevancia"
+      const texto = await V.comDiario(
+        "buscar_jurisprudencia_tcero",
+        {
+          texto_livre: a.texto_livre, grupos: a.grupos, numero_acordao: a.numero_acordao, numero_processo: a.numero_processo,
+          relator: a.relator, orgao_julgador: a.orgao_julgador, pagina: a.pagina, por_pagina: a.por_pagina,
+          detalhar: a.detalhar, ordenar: a.ordenar,
+        },
+        () =>
+          buscar(
+            a.texto_livre ?? "",
+            a.numero_acordao ?? null,
+            a.numero_processo ?? null,
+            a.relator ?? null,
+            a.orgao_julgador ?? null,
+            a.pagina ?? 1,
+            a.por_pagina ?? L.POR_PAGINA_PADRAO,
+            !!a.detalhar,
+            a.grupos ?? null,
+            a.ordenar ?? "relevancia"
+          )
       );
       return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
     } catch (e) {
@@ -967,11 +1044,25 @@ server.registerTool(
       numero_acordao: z.string().optional().describe('Número do acórdão (ex.: "00055/26"), se não tiver o id.'),
       numero_processo: z.string().optional().describe("Número do processo administrativo, se não tiver o id nem o número do acórdão."),
       ler_inteiro_teor: z.boolean().optional().describe("Se true, baixa e extrai o texto do PDF do inteiro teor (relatório + voto completos)."),
+      modo: z
+        .enum(["completo", "triagem"])
+        .optional()
+        .describe(
+          '"completo" (padrão) ou "triagem". "triagem" = leitura BARATA para decidir se vale ler a decisão inteira: citação, resultado, ementa inteira, ' +
+            "dispositivo, órgão do cadastro e link; e, com `ler_inteiro_teor=true`, do PDF só a estrutura (onde começam acórdão, relatório, voto e votos de " +
+            "outros conselheiros, com a página aproximada), o fecho e as linhas que os detectores já marcam (voto divergente, obiter, transcrição, parecer do " +
+            "MPC, alegação da parte), cada uma com o lugar onde aparece. SEM o texto corrido e SEM as informações adicionais de IA. A triagem NUNCA serve " +
+            'para aspas nem para escrever "inteiro teor lido" numa ficha; o recibo que ela grava é exatamente o que o modo completo gravaria (não rebaixa nem promove a verificação).'
+        ),
     },
   },
   async (a) => {
     try {
-      const texto = await obterAcordao(a.id_decisao ?? null, a.numero_acordao ?? null, a.numero_processo ?? null, !!a.ler_inteiro_teor);
+      const texto = await V.comDiario(
+        "obter_acordao_tcero",
+        { id_decisao: a.id_decisao, numero_acordao: a.numero_acordao, numero_processo: a.numero_processo, ler_inteiro_teor: a.ler_inteiro_teor, modo: a.modo },
+        () => obterAcordao(a.id_decisao ?? null, a.numero_acordao ?? null, a.numero_processo ?? null, !!a.ler_inteiro_teor, a.modo ?? "completo")
+      );
       return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
     } catch (e) {
       return { content: [{ type: "text", text: L.finalizarSaida(formatarErroPortal(e, `Erro ao consultar o portal do TCE-RO (${e.constructor.name})`)) }], isError: true };
@@ -999,7 +1090,11 @@ server.registerTool(
   },
   async (a) => {
     try {
-      const texto = await verificarCitacao(a.id_decisao ?? null, a.numero_acordao ?? null, a.trecho);
+      const texto = await V.comDiario(
+        "verificar_citacao_tcero",
+        { id_decisao: a.id_decisao, numero_acordao: a.numero_acordao, trecho: a.trecho },
+        () => verificarCitacao(a.id_decisao ?? null, a.numero_acordao ?? null, a.trecho)
+      );
       return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
     } catch (e) {
       return { content: [{ type: "text", text: L.finalizarSaida(formatarErroPortal(e, `Erro ao consultar o portal do TCE-RO (${e.constructor.name})`)) }], isError: true };
@@ -1018,6 +1113,138 @@ server.registerTool(
     inputSchema: {},
   },
   async () => ({ content: [{ type: "text", text: L.finalizarSaida(L.diagnosticoRitmo()) }] })
+);
+
+server.registerTool(
+  "buscar_recibos_tcero",
+  {
+    title: "Buscar nos recibos locais (sem rede)",
+    description:
+      "Busca SEM REDE nos recibos locais: o que esta máquina já leu do TCE-RO (cada `obter_acordao_tcero` grava um recibo com ementa, dispositivo e, se lido, o texto do PDF). " +
+      "Serve para reencontrar um acórdão já lido, ou procurar uma expressão no voto de um acórdão que já passou por aqui, sem gastar consulta ao portal. NÃO é pesquisa no " +
+      'acervo do TCE-RO: zero resultado aqui NUNCA é "não há jurisprudência" nem "não localizado" — para isso use `buscar_jurisprudencia_tcero`. Procura na ementa, no ' +
+      "dispositivo e no texto do PDF gravados; nunca no texto de IA do DEJUR. Palavra inteira, com a mesma normalização do verificador (caixa, acento, pontuação). " +
+      "Devolve quantos recibos existem e quantos atendem; por recibo: sigla/número, id, órgão, data da sessão, relator, processo, citação pronta (sem a data do DOe, que o " +
+      "recibo não guarda), link, a verificação gravada (ementa+dispositivo, PDF lido ou lido em parte), onde o termo aparece (posição no julgado e página aproximada) e o trecho em volta.",
+    inputSchema: {
+      consulta: z.string().default("").describe('Palavras (todas exigidas) e "frases exatas entre aspas". `multa*` = prefixo.'),
+      grupos: z.array(z.array(z.string())).optional().describe("Como em buscar_jurisprudencia_tcero: OU dentro do grupo, E entre grupos."),
+      relator: z.string().optional().describe("Parte do nome do relator (sem caixa/acento)."),
+      orgao: z.string().optional().describe('"1ª Câmara", "2ª Câmara" ou "Pleno" (órgão do cadastro).'),
+      limite: z.number().int().optional().describe("Quantos mostrar (1 a 20; padrão 10)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  async (a) => {
+    try {
+      const texto = await V.comDiario("buscar_recibos_tcero", { consulta: a.consulta, grupos: a.grupos, relator: a.relator, orgao: a.orgao, limite: a.limite }, async () =>
+        V.buscarRecibos(a.consulta ?? "", a.grupos ?? null, a.relator ?? null, a.orgao ?? null, a.limite ?? 10)
+      );
+      return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: L.finalizarSaida(formatarErroPortal(e, `Erro ao ler os recibos locais (${e.constructor.name})`)) }], isError: true };
+    }
+  }
+);
+
+server.registerTool(
+  "diagnostico_erros_tcero",
+  {
+    title: "Diagnóstico do diário de erros (TCE-RO)",
+    description:
+      "Resume as falhas que as ferramentas deste servidor registraram nesta máquina (rede, portal, PDF, formato inesperado) e devolve o link do formulário de relato já preenchido. " +
+      "O diário fica em `~/.tcero-jurisprudencia/erros.jsonl` (ou em `TCERO_MCP_DIR_ESTADO`) e guarda SÓ dado técnico: ferramenta, tipo do erro, mensagem curta sanitizada, versão, " +
+      "sistema e data. NUNCA o texto da busca, nome de parte, número de processo nem trecho citado. Não faz nenhuma requisição.",
+    inputSchema: {
+      dias: z.number().int().optional().describe("Período a resumir (1 a 365; padrão 30)."),
+      relatorio: z.boolean().optional().describe("Se true, acrescenta a tabela técnica dos últimos registros, pronta para colar numa issue."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  async (a) => ({ content: [{ type: "text", text: L.finalizarSaida(V.diagnosticoErros(a.dias ?? 30, !!a.relatorio)) }] })
+);
+
+server.registerTool(
+  "linha_do_tempo_tcero",
+  {
+    title: "Linha do tempo por ano (TCE-RO)",
+    description:
+      "Conta, ano a ano e por órgão julgador, as decisões que casam uma consulta, e mostra por ano as duas mais pertinentes (citação e link). UMA consulta ao portal (zero se a mesma " +
+      "busca acabou de ser feita: a resposta fica em cache por alguns minutos); o filtro de `grupos` é o mesmo da busca. É contagem do que o portal devolveu para ESTA consulta, " +
+      "não tendência da Corte: o volume de processos e a composição dos órgãos mudam de ano para ano. Use para saber QUANDO e em QUAL órgão o tema aparece e ler as decisões dos " +
+      "dois períodos; mudança de proporção entre anos nunca prova mudança de entendimento.",
+    inputSchema: {
+      texto_livre: z.string().default("").describe("Como em buscar_jurisprudencia_tcero (OU entre palavras)."),
+      grupos: z.array(z.array(z.string())).optional().describe("Como em buscar_jurisprudencia_tcero (OU dentro do grupo, E entre grupos)."),
+      relator: z.string().optional().describe("Nome do relator (exato; a ferramenta tenta aproximar pela lista do portal)."),
+      orgao_julgador: z.string().optional().describe('"1ª Câmara", "2ª Câmara" ou "Pleno".'),
+      ano_inicio: z.number().int().optional().describe("Primeiro ano da sessão a mostrar (recorte no cliente; não muda a consulta)."),
+      ano_fim: z.number().int().optional().describe("Último ano da sessão a mostrar."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  async (a) => {
+    try {
+      const texto = await V.comDiario(
+        "linha_do_tempo_tcero",
+        { texto_livre: a.texto_livre, grupos: a.grupos, relator: a.relator, orgao_julgador: a.orgao_julgador, ano_inicio: a.ano_inicio, ano_fim: a.ano_fim },
+        () => linhaDoTempoAsync(a.texto_livre ?? "", a.grupos ?? null, a.relator ?? null, a.orgao_julgador ?? null, a.ano_inicio ?? null, a.ano_fim ?? null)
+      );
+      return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: L.finalizarSaida(formatarErroPortal(e, `Erro ao consultar o portal do TCE-RO (${e.constructor.name})`)) }], isError: true };
+    }
+  }
+);
+
+server.registerTool(
+  "sugerir_termos_tcero",
+  {
+    title: "Sugerir termos para `grupos` (TCE-RO)",
+    description:
+      "Sugere 10 a 20 palavras e pares de palavras para montar `grupos`, tirados das ementas e dispositivos que casaram a sua consulta: frequentes entre as decisões que casaram e " +
+      "raros fora delas. Resolve o problema do portal, que só casa as palavras que você escreveu: o vocabulário que o TCE-RO usou para o mesmo assunto aparece aqui. Usa a resposta da " +
+      "busca (zero requisição extra se a mesma consulta já foi feita há pouco; senão, UMA consulta). É sugestão, não conclusão: confira que a nova busca traz o assunto, e NÃO cole a " +
+      "lista inteira em `grupos` — escolha 2 a 4 que sejam mesmo sinônimos (medição: 3 sugestões em OU derrubaram o topo em 4 de 6 consultas). Exclui o seu próprio termo, nomes de " +
+      "relatores e palavras de ligação; ignora o texto de IA do DEJUR.",
+    inputSchema: {
+      texto_livre: z.string().default("").describe("Termos soltos (OU no portal). Serve para descobrir o vocabulário do assunto."),
+      grupos: z.array(z.array(z.string())).optional().describe("Conceitos já montados (E entre grupos); as sugestões saem das decisões que casam os grupos."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  async (a) => {
+    try {
+      const texto = await V.comDiario("sugerir_termos_tcero", { texto_livre: a.texto_livre, grupos: a.grupos }, () => sugerirTermosAsync(a.texto_livre ?? "", a.grupos ?? null));
+      return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: L.finalizarSaida(formatarErroPortal(e, `Erro ao consultar o portal do TCE-RO (${e.constructor.name})`)) }], isError: true };
+    }
+  }
+);
+
+server.registerTool(
+  "atualizar_extensao_tcero",
+  {
+    title: "Baixar a versão mais nova desta extensão",
+    description:
+      "USE SÓ QUANDO O USUÁRIO PEDIR para atualizar a extensão. Consulta o GitHub oficial do projeto. Sem `confirmar`, só INFORMA se há versão mais nova (nada é baixado): " +
+      "mostre ao usuário e PERGUNTE se quer baixar. Só com `confirmar=true` — depois que o usuário disse que quer — baixa o arquivo para a pasta Downloads, confere o SHA-256 e diz " +
+      "onde ele está. NÃO instala: o usuário instala dando dois cliques no arquivo e confirmando. Nunca use por iniciativa própria, nunca passe confirmar=true sem a resposta do " +
+      "usuário e nunca abra ou execute o arquivo. Não consulta o portal do TCE-RO.",
+    inputSchema: {
+      confirmar: z.boolean().optional().describe("true = o usuário disse, nesta conversa, que quer baixar o arquivo agora. Omita para só ver se há versão nova."),
+    },
+    annotations: { title: "Baixar atualização da extensão", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async (a) => {
+    try {
+      return { content: [{ type: "text", text: textoAtualizacao(await baixarAtualizacao({ confirmar: a.confirmar === true })) }] };
+    } catch (e) {
+      const texto = e instanceof ErroAtualizacao ? e.message : `Não consegui baixar a atualização (${e?.message || e}).`;
+      return { content: [{ type: "text", text: texto }], isError: true };
+    }
+  }
 );
 
 // Só conecta o transporte quando executado diretamente (`node server/index.js`), nunca quando
@@ -1050,4 +1277,9 @@ export function _resetDepsParaTeste() {
   _consultarApiImpl = consultarApi;
   _baixarPdfImpl = baixarPdf;
 }
-export { buscar, obterAcordao, verificarCitacao };
+export function _limparCachesParaTeste() {
+  cacheRespostas.clear();
+  cacheBytes = 0;
+  cachePdf.clear();
+}
+export { buscar, obterAcordao, verificarCitacao, linhaDoTempoAsync, sugerirTermosAsync, consultaFiltrada, extrairTextoPdf, formatarErroPortal };

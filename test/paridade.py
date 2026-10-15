@@ -269,6 +269,205 @@ def rodar_lado_node(dir_recibos, dir_recibos_vazio):
     return principal
 
 
+# --------------------------------------------------------------------------- #
+# v1.6.0 — buscar_recibos, diário, linha do tempo, sugerir termos, triagem,     #
+# alertas que dizem onde. MESMOS casos nos dois lados; zero rede.               #
+# Texto do PDF: as funções puras recebem o MESMO texto (extraído pelo Python)   #
+# para isolar o algoritmo da diferença PyMuPDF x pdfjs-dist.                    #
+# --------------------------------------------------------------------------- #
+import gzip
+import random
+
+ESTADO_FIXO = "/tmp/_paridade_estado_tcero"
+SANITIZAR = ['falhou em "texto da busca" e \'outro trecho longo\' a@b.com 0123456/2026',
+             "GET https://papyrus.tcero.tc.br/api/espelho/buscar?textoLivre=X&r=1 falhou",
+             "https://tcero.tc.br/AbrirPdfConvidado/abcdef0123456789abcdef falhou 987654321", ""]
+ARGS = [{"texto_livre": "abc", "grupos": [["a", "b"], ["c"]], "pagina": 2, "detalhar": True, "modo": "triagem", "id_decisao": 98114, "relator": "Fulano", "limite": 0},
+        {"grupos": ["x", "y"], "ordenar": "data", "dias": 30}]
+MSGS = ["[LEITURA DE PDF NÃO REALIZADA — x]", "PDF sem texto extraível", "[EXTRAÇÃO PARCIAL — t]", "formato inesperado", "O portal respondeu HTTP 503 de x",
+        "ReadTimeout: x", "Muitas consultas em pouco tempo", "ECONNRESET", "nada"]
+SAIDAS = ["[LEITURA DE PDF NÃO REALIZADA — x]", "Erro na consulta ao TCE-RO: y", "Erro na consulta ao TCE-RO: x\n\nVersão: 1.6.0", "Erro ao consultar o portal do TCE-RO (K): z",
+          "PDF sem texto extraível (p)", "ok", "a\n[EXTRAÇÃO PARCIAL — t]\nb\n\nVersão: 1"]
+ENTRADAS = [
+    {"quando": "2026-10-10T12:00:00+00:00", "versao": "1.6.0", "ferramenta": "buscar_jurisprudencia_tcero", "tipo": "timeout", "http": None, "parcial": False, "ms": 900, "args": {"pagina": 2}, "limitador": "nível 1/5, livre", "mensagem": "m1 | x"},
+    {"quando": "2026-10-11T12:00:00+00:00", "versao": "1.5.3", "ferramenta": "buscar_jurisprudencia_tcero", "tipo": "timeout", "http": None, "parcial": True, "ms": 100, "args": {}, "limitador": "nível 1/5, livre", "mensagem": "m2"},
+    {"quando": "2026-10-12T12:00:00+00:00", "versao": "1.6.0", "ferramenta": "obter_acordao_tcero", "tipo": "pdf_falha", "http": "404", "parcial": False, "ms": None, "args": {"modo": "triagem"}, "limitador": "nível 1/5, livre", "mensagem": "m3"},
+    {"quando": "2026-10-13T12:00:00+00:00", "versao": "1.6.0", "ferramenta": "x", "tipo": "formato_inesperado", "http": None, "parcial": False, "ms": 5, "args": {"grupos": "2 grupo(s), 3 termo(s)"}, "limitador": "nível 2/5, BLOQUEADO", "mensagem": "m4"},
+    {"quando": "2026-10-14T12:00:00+00:00", "versao": "1.6.0", "ferramenta": "x", "tipo": "http_503", "http": "503", "parcial": False, "ms": 5, "args": {}, "limitador": "nível 1/5, livre", "mensagem": "m5"},
+]
+QUERIES_REC = [("licitação", None, None, None, 10), ("multa*", None, None, None, 1), ('"aplicadas ao gestor"', None, None, None, 10), ("", [["improcedentes", "x"], ["multas"]], None, None, 10),
+               ("multa", None, "sintetica", None, 10), ("", None, None, "pleno", 10), ("", None, None, None, 10), ("de", None, None, None, 10), ("ZZXQWIA", None, None, None, 10),
+               ("licitatório", None, None, "Pleno", 1), ("determinação tribunal", None, None, None, 20), ("reincidência", [["multa", "multas"]], None, "2ª Câmara", 5)]
+ITENS_LT = [{"source": {"idDecisao": i, "dataSessao": f"{a}-03-01T00:00:00", "orgaoJulgador": o, "sigla": "AC1-TC", "numero": f"{i:05d}/{str(a)[2:]}",
+            "ementa": f"multa {'reincidência' if i % 2 else ''} tema{i}", "linkArquivo": f"//tce.ro.gov.br/AbrirPdfConvidado/h{i}"}}
+            for i, (a, o) in enumerate([(2020, "Pleno"), (2020, "1ª Câmara"), (2020, "Pleno"), (2021, "Pleno"), (2022, "2ª Câmara"), (2022, "2ª Câmara"), (2022, "Pleno"), (2022, "Pleno"), (2022, "1ª Câmara")], start=1)]
+ITENS_LT.append({"source": {"idDecisao": 99, "ementa": "multa reincidência sem sessão", "orgaoJulgador": "Pleno"}})
+LT_E2E = [(None, [["reincidência"], ["multa"]], None, None, None, None), ("licitação", None, None, "Pleno", 2020, 2024), ("multa", None, None, None, None, None), ("", None, None, None, None, None), ("multa", None, None, None, "abc", None)]
+SUG_E2E = [("reincidência multa", None), (None, [["reincidência"], ["multa"]]), ("licitação direcionamento fraude", None), ("zzxxyy", None), ("aposentadoria tempo contribuição", None)]
+SINT = {"idDecisao": 11111, "sigla": "AC2-TC", "numero": "00001/26", "processo": "00001/26", "relator": "MARIA SINTETICA", "orgaoJulgador": "2ª Câmara", "dataSessao": "2026-02-02T00:00:00",
+        "linkArquivo": "//tce.ro.gov.br/AbrirPdfConvidado/aaa", "ementa": "Julgados IMPROCEDENTES os pedidos. Multas aplicadas ao gestor; reincidência afastada.",
+        "acordaoDescricao": "<p>Aplicar multa de R$ 1.000,00 ao responsável.</p>", "informacoesAdicionais": "<p>ZZXQWIA texto de IA.</p>"}
+
+
+def _sem_sistema(t):
+    return "\n".join(l for l in t.split("\n") if "Sistema:" not in l and "Relatar o problema" not in l)
+
+
+def _trechos(textos):
+    rnd = random.Random(160)
+    out = []
+    for nome, t in textos.items():
+        ps = t.split()
+        for _ in range(70):
+            i = rnd.randrange(0, max(1, len(ps) - 30)); n = rnd.randrange(8, 25)
+            a = " ".join(ps[i:i + n])
+            if rnd.random() < 0.25:
+                j = rnd.randrange(i + n, max(i + n + 1, len(ps) - 12)); a += " [...] " + " ".join(ps[j:j + 8])
+            out.append([nome, a])
+    return out
+
+
+NODE_V160 = r"""
+import fs from "node:fs";
+const base = %(base)s;
+const L = await import(base + "lib.js"), V = await import(base + "v160.js"), idx = await import(base + "index.js"), P = await import(base + "posicao2.js");
+const IN = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+const C2 = IN.c2; const out = {};
+class RuntimeError extends Error {}
+out.sanitizar = IN.sanitizar.map((x) => V.sanitizarErro(x));
+out.args = IN.args.map((x) => V.descreverArgs(x));
+out.tipo = IN.msgs.map((x) => V.tipoDoErroDiario(x));
+out.falha = IN.saidas.map((x) => [V.falhaNaSaida(x), V.linhaDaFalha(x)]);
+out.resumo = [V.resumirErros(IN.entradas, 30, false), V.resumirErros(IN.entradas, 30, true), V.resumirErros([], 7, false)];
+out.diag = [0, "x", 400].map((x) => V.diagnosticoErros(x));
+const e = V.registrarErro("obter_acordao_tcero", { erro: new RuntimeError("Falha https://a.b/c?q=SEG 'trecho longo' 0123/26 HTTP 502 x"), args: IN.args[0], ms: 7, agora: 1760500000000 });
+const f = JSON.parse(fs.readFileSync(V.arquivoErros(), "utf-8").trim().split("\n").pop());
+delete e.sistema; delete f.sistema; out.registrar = [e, f];
+out.recibos = IN.queries.map((q) => V.buscarRecibos(q[0], q[1], q[2], q[3], q[4], IN.dirRec));
+out.ltpura = [V.linhaDoTempo(IN.itens, ["multa", "reincidência"], null, null, "f", 50), V.linhaDoTempo(IN.itens, ["multa"], 2021, 2022)];
+idx._setDepsParaTeste({ consultarApi: async () => C2 });
+out.lt = []; for (const q of IN.lt) out.lt.push(await idx.linhaDoTempoAsync(...q));
+out.sug = []; for (const q of IN.sug) out.sug.push(await idx.sugerirTermosAsync(...q));
+const dec = { 98114: IN.s98114 };
+idx._setDepsParaTeste({ consultarApi: async () => ({ result: [{ source: IN.s98114 }] }), baixarPdf: async () => fs.readFileSync(IN.pdf98114) });
+out.tri0 = await idx.obterAcordao(98114, null, null, false, "triagem");
+out.tri1 = await idx.obterAcordao(98114, null, null, true, "triagem");
+out.pdf = {};
+for (const [n, t] of Object.entries(IN.textos)) {
+  const res = { sem_texto: false, paginas: 9, parcial: false };
+  out.pdf[n] = { est: V.estruturaPdfTcero(t), fecho: V.fechoDoPdf(t), al: V.alertasDeTriagem(t), lin: V.linhasTriagemPdf(t, res), pos: [0, 500, 20000, 60000].map((p) => [P.posicaoTcero(t, Math.min(p, t.length - 1)), L.paginaPdfTcero(t, Math.min(p, t.length - 1))]) };
+}
+out.trechos = IN.trechos.map(([n, tr]) => { const r = L.verificarTrecho({ t: IN.textos[n] }, tr); return [r.valido, r.alertas, r.posicao || "", r.pagina || ""]; });
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def paridade_v160(tmp):
+    """Devolve (casos, divergentes, natureza)."""
+    sys.dont_write_bytecode = True
+    _garantir_fonte_python()
+    est = os.path.join(tmp, "estado_v160"); dir_rec = os.path.join(tmp, "rec_v160"); os.makedirs(dir_rec)
+    fundo = os.path.expanduser("~/MCP/tcero-jurisprudencia/fundo_vocabulario.json")
+    for k, v in (("TCERO_MCP_DIR_ESTADO", est), ("TCERO_MCP_DIR_RECIBOS", dir_rec), ("TCERO_MCP_SEM_AVISO_ATUALIZACAO", "1"), ("TCERO_MCP_FUNDO_VOCAB", fundo)):
+        os.environ[k] = v
+    spec = importlib.util.spec_from_file_location("servidor_tcero_v160", PY_SOURCE)
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    m._ARQUIVO_ESTADO_DISJUNTOR = os.path.join(tmp, "disj_py.json")
+    c2 = json.loads(gzip.open(os.path.join(FIXTURES, "exp_C2_controle_or.json.gz")).read().decode("utf-8"))
+    s98114 = next(i["source"] for i in FIX_ID["result"] if i["source"]["idDecisao"] == 98114)
+    s96141 = next(i["source"] for i in _ler_fixture("02_busca_numeroAcordao.json")["result"] if i["source"]["idDecisao"] == 96141)
+    pdfs = {s98114["linkArquivo"]: PDF_98114, s96141["linkArquivo"]: os.path.join(FIXTURES, "pdf", "96141.pdf")}
+    decs = {"98114": s98114, "96141": s96141}
+
+    async def api(params, op):
+        return {"result": [{"source": decs[str(params["IdDecisao"])]}]}
+
+    async def baixar(url):
+        for l, p in pdfs.items():
+            if m._corrigir_link_pdf(l) == url:
+                return open(p, "rb").read()
+        raise AssertionError(url)
+    m._consultar_api, m._baixar_pdf = api, baixar
+    for i in (98114, 96141):
+        asyncio.run(m._obter_acordao(i, None, None, True))
+    m._gravar_recibo_tcero(SINT)
+    textos = {}
+    for n in ("98114", "96141", "77649", "85572"):
+        textos[n] = m._extrair_texto_pdf(open(os.path.join(FIXTURES, "pdf", n + ".pdf"), "rb").read())["texto"]
+    py = {}
+    py["sanitizar"] = [m._sanitizar_erro(x) for x in SANITIZAR]
+    py["args"] = [m._descrever_args(x) for x in ARGS]
+    py["tipo"] = [m._tipo_do_erro_diario(x) for x in MSGS]
+    py["falha"] = [[m._falha_na_saida(x), m._linha_da_falha(x)] for x in SAIDAS]
+    py["resumo"] = [m._resumir_erros(ENTRADAS, 30, False), m._resumir_erros(ENTRADAS, 30, True), m._resumir_erros([], 7, False)]
+    py["diag"] = [m._diagnostico_erros(x) for x in (0, "x", 400)]
+    m._estado_limitador_resumo = lambda agora=None: "nível 1/5, livre"
+    e = m._registrar_erro("obter_acordao_tcero", erro=type("RuntimeError", (Exception,), {})("Falha https://a.b/c?q=SEG 'trecho longo' 0123/26 HTTP 502 x") if False else RuntimeError("Falha https://a.b/c?q=SEG 'trecho longo' 0123/26 HTTP 502 x"), args=ARGS[0], ms=7, agora=1760500000)
+    f = json.loads(open(m._arquivo_erros(), encoding="utf-8").read().strip().split("\n")[-1])
+    e.pop("sistema"); f.pop("sistema"); py["registrar"] = [e, f]
+    py["recibos"] = [m._buscar_recibos(*q, pasta=dir_rec) for q in QUERIES_REC]
+    py["ltpura"] = [m._linha_do_tempo(ITENS_LT, ["multa", "reincidência"], None, None, "f", 50), m._linha_do_tempo(ITENS_LT, ["multa"], 2021, 2022)]
+
+    async def api_c2(params, op):
+        return c2
+    m._consultar_api = api_c2
+    py["lt"] = [asyncio.run(m._linha_do_tempo_async(*q)) for q in LT_E2E]
+    py["sug"] = [asyncio.run(m._sugerir_termos_async(*q)) for q in SUG_E2E]
+    m._consultar_api = api
+    m.DIR_RECIBOS = os.path.join(tmp, "rec_tri"); m._cache_limpar(); m._cache_pdf_limpar()
+    py["tri0"] = asyncio.run(m._obter_acordao(98114, None, None, False, "triagem"))
+    py["tri1"] = asyncio.run(m._obter_acordao(98114, None, None, True, "triagem"))
+    py["pdf"] = {}
+    for n, t in textos.items():
+        res = {"sem_texto": False, "paginas": 9, "parcial": False}
+        py["pdf"][n] = {"est": m._estrutura_pdf_tcero(t), "fecho": m._fecho_do_pdf(t), "al": m._alertas_de_triagem(t), "lin": m._linhas_triagem_pdf(t, res),
+                        "pos": [[m._posicao_tcero(t, min(p, len(t) - 1)), m._pagina_pdf_tcero(t, min(p, len(t) - 1))] for p in (0, 500, 20000, 60000)]}
+    trechos = _trechos(textos)
+    py["trechos"] = []
+    for n, tr in trechos:
+        r = m._verificar_trecho({"t": textos[n]}, tr)
+        py["trechos"].append([r["valido"], r["alertas"], r.get("posicao") or "", r.get("pagina") or ""])
+
+    entrada = {"sanitizar": SANITIZAR, "args": ARGS, "msgs": MSGS, "saidas": SAIDAS, "entradas": ENTRADAS, "queries": QUERIES_REC, "dirRec": dir_rec, "itens": ITENS_LT,
+               "lt": LT_E2E, "sug": SUG_E2E, "c2": c2, "s98114": s98114, "pdf98114": PDF_98114, "textos": textos, "trechos": trechos}
+    arq_in = os.path.join(tmp, "in_v160.json"); arq_js = os.path.join(tmp, "v160.mjs")
+    json.dump(entrada, open(arq_in, "w", encoding="utf-8"), ensure_ascii=False)
+    open(arq_js, "w", encoding="utf-8").write(NODE_V160 % {"base": json.dumps("file://" + os.path.dirname(INDEX_JS) + "/")})
+    env = dict(os.environ); env["TCERO_MCP_DIR_ESTADO"] = est; env["TCERO_MCP_DIR_RECIBOS"] = os.path.join(tmp, "rec_node")
+    r = subprocess.run(["node", arq_js, arq_in], capture_output=True, text=True, env=env)
+    if r.returncode:
+        sys.exit("Node v160 falhou:\n" + r.stderr)
+    nd = json.loads(r.stdout)
+
+    dif, natureza, total = 0, {}, 0
+    for chave in py:
+        if chave == "pdf":
+            itens = [(f"pdf[{n}].{k}", nd["pdf"][n][k], py["pdf"][n][k]) for n in py["pdf"] for k in py["pdf"][n]]
+        elif isinstance(py[chave], list):
+            itens = [(f"{chave}[{i}]", nd[chave][i], v) for i, v in enumerate(py[chave])]
+        else:
+            itens = [(chave, nd[chave], py[chave])]
+        for nome, a, b in itens:
+            total += 1
+            if chave == "resumo":
+                a, b = (_sem_sistema(a), _sem_sistema(b)) if isinstance(a, str) else (a, b)
+            if chave == "tri1":
+                a, b = sem_g(a), sem_g(b)
+                if a != b and _normalizar_espaco(a) != _normalizar_espaco(b):
+                    natureza[nome] = "esperado - triagem com PDF depende do texto extraido (PyMuPDF x pdfjs); algoritmo conferido com texto identico em pdf[*]"
+                    continue
+            if chave == "tri0":
+                a, b = sem_g(a), sem_g(b)
+            if json.dumps(a, ensure_ascii=False, sort_keys=True) != json.dumps(b, ensure_ascii=False, sort_keys=True):
+                dif += 1; natureza[nome] = "DIVERGENTE"
+                print("DIFERE", nome); print("  node:", json.dumps(a, ensure_ascii=False)[:500]); print("  py:  ", json.dumps(b, ensure_ascii=False)[:500])
+    return total, dif, natureza
+
+
+def sem_g(t):
+    return re.sub(r"gravado em \d{4}-\d{2}-\d{2}T[\d:+\-]+", "gravado em <ts>", t or "")
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         dir_py = os.path.join(tmp, "recibos_py")
@@ -280,6 +479,7 @@ def main():
 
         py = rodar_lado_python(dir_py)
         node = rodar_lado_node(dir_node, dir_node_vazio)
+        tot160, dif160, nat160 = paridade_v160(tmp)
 
     dif = 0
     natureza = {}
@@ -388,7 +588,9 @@ def main():
             dif += 1
             natureza["recibo_hashes"] = "texto idêntico mas hash difere — bug de serialização, investigar"
 
-    total = len(CASOS_BUSCA) + 2 + 2 + 1  # buscas + obter(2) + verificar(2) + recibo
+    dif += dif160
+    natureza.update({"v160:" + k: v for k, v in nat160.items()})
+    total = len(CASOS_BUSCA) + 2 + 2 + 1 + tot160  # buscas + obter(2) + verificar(2) + recibo + v1.6.0
     print(f"\ncasos {total} · divergentes reais {dif}")
     if natureza:
         print("Natureza de cada item com diferença (real ou cosmética):")

@@ -2,9 +2,9 @@
   "manifest_version": "0.2",
   "name": "tcero-jurisprudencia",
   "display_name": "Jurisprudência TCE-RO",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "description": "Busca de jurisprudência do Tribunal de Contas do Estado de Rondônia (portal público ePapyrus), direto no Claude.",
-  "long_description": "Adiciona ao Claude quatro ferramentas para o acervo de decisões do TCE-RO (controle externo em Rondônia: licitação, prestação de contas, responsabilização de gestor, imputação de multa/débito, atos de pessoal sujeitos a registro), pesquisado no portal público ePapyrus (papyrus.tcero.tc.br), sem login. **buscar_jurisprudencia_tcero** pesquisa por texto livre e/ou campo (número de acórdão, número de processo, relator, órgão julgador); como o portal só sabe unir termos por OU e não tem nenhuma forma conhecida de E, `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos NO CLIENTE, depois de baixar tudo com OU nativo — sem isso, uma busca de dois conceitos devolve principalmente ruído. Paginação também é feita no cliente, com resumo compacto por padrão. **obter_acordao_tcero** traz o detalhe completo de uma decisão (ementa integral, dispositivo, informações adicionais, legislação aplicada, link do PDF) e, com `ler_inteiro_teor=true`, baixa esse PDF e extrai o relatório e o voto de verdade — categoria de verificação mais forte que ementa/índice, sem intervenção humana no navegador; quando o PDF é digitalizado (sem texto), a extração para num teto de páginas/tempo, ou o texto não cabe no orçamento de saída, isso é dito explicitamente, nunca disfarçado de sucesso. **verificar_citacao_tcero** confere se um trecho aparece literalmente na ementa/dispositivo (ou, quando já existe recibo local de uma leitura anterior, também no inteiro teor lido em PDF), com casamento por palavra inteira e alertas quando o trecho pode não ser a posição da própria Corte (parecer do Ministério Público de Contas ou do corpo técnico, alegação da parte, transcrição de outro tribunal, negação próxima, trecho entre aspas). **diagnostico_ritmo_tcero** explica por que as buscas podem estar falhando, sem consultar o portal. AVISO: integração não-oficial, mantida por um advogado (não pelo TCE-RO); o campo \"informações adicionais\" é gerado com apoio de IA pelo próprio DEJUR do tribunal e nunca deve ser citado como texto do acórdão; confirme número, relator, órgão e ementa/dispositivo antes de citar em peça.",
+  "long_description": "Adiciona ao Claude nove ferramentas para o acervo de decisões do TCE-RO (controle externo em Rondônia: licitação, prestação de contas, responsabilização de gestor, imputação de multa/débito, atos de pessoal sujeitos a registro), pesquisado no portal público ePapyrus (papyrus.tcero.tc.br), sem login. **buscar_jurisprudencia_tcero** pesquisa por texto livre e/ou campo (número de acórdão, número de processo, relator, órgão julgador); como o portal só sabe unir termos por OU e não tem nenhuma forma conhecida de E, `grupos` (E entre grupos, OU dentro do grupo) filtra por 2+ conceitos NO CLIENTE, depois de baixar tudo com OU nativo — sem isso, uma busca de dois conceitos devolve principalmente ruído. Paginação também é feita no cliente, com resumo compacto por padrão. **obter_acordao_tcero** traz o detalhe completo de uma decisão (ementa integral, dispositivo, informações adicionais, legislação aplicada, link do PDF) e, com `ler_inteiro_teor=true`, baixa esse PDF e extrai o relatório e o voto de verdade — categoria de verificação mais forte que ementa/índice, sem intervenção humana no navegador; quando o PDF é digitalizado (sem texto), a extração para num teto de páginas/tempo, ou o texto não cabe no orçamento de saída, isso é dito explicitamente, nunca disfarçado de sucesso. **verificar_citacao_tcero** confere se um trecho aparece literalmente na ementa/dispositivo (ou, quando já existe recibo local de uma leitura anterior, também no inteiro teor lido em PDF), com casamento por palavra inteira e alertas quando o trecho pode não ser a posição da própria Corte (parecer do Ministério Público de Contas ou do corpo técnico, alegação da parte, transcrição de outro tribunal, negação próxima, trecho entre aspas). **diagnostico_ritmo_tcero** explica por que as buscas podem estar falhando, sem consultar o portal. Novas na 1.6.0: **buscar_recibos_tcero** (acha, SEM rede, o que você já leu antes: ementa, dispositivo e voto dos acórdãos que passaram por esta máquina), **sugerir_termos_tcero** (palavras que o TCE-RO realmente usou para o seu assunto, para montar `grupos`), **linha_do_tempo_tcero** (quantas decisões por ano e por órgão, com as duas mais pertinentes de cada ano), **diagnostico_erros_tcero** (resume as falhas registradas nesta máquina, sem dado do caso) e **atualizar_extensao_tcero** (só informa se há versão nova e, se você mandar, baixa o arquivo para a pasta Downloads; quem instala é você). `obter_acordao_tcero` ganhou `modo=\"triagem\"` (leitura barata para decidir se vale ler o acórdão inteiro) e os alertas de `verificar_citacao_tcero` agora dizem ONDE: a frase do obiter, o título do voto de outro conselheiro e a página aproximada do PDF. AVISO: integração não-oficial, mantida por um advogado (não pelo TCE-RO); o campo \"informações adicionais\" é gerado com apoio de IA pelo próprio DEJUR do tribunal e nunca deve ser citado como texto do acórdão; confirme número, relator, órgão e ementa/dispositivo antes de citar em peça.",
   "author": {
     "name": "Roberto Grécia Bessa (OAB/RO 7865-A)"
   },
@@ -39,7 +39,7 @@
     },
     {
       "name": "obter_acordao_tcero",
-      "description": "Detalhe completo de uma decisão do TCE-RO (ementa integral, dispositivo, informações adicionais, legislação, link do PDF). Com ler_inteiro_teor=true, baixa o PDF do inteiro teor e extrai relatório e voto de verdade."
+      "description": "Detalhe completo de uma decisão do TCE-RO (ementa integral, dispositivo, informações adicionais, legislação, link do PDF). Com ler_inteiro_teor=true, baixa o PDF do inteiro teor e extrai relatório e voto de verdade. Com modo=\"triagem\": leitura barata (estrutura, fecho e linhas marcadas do PDF), nunca para aspas."
     },
     {
       "name": "verificar_citacao_tcero",
@@ -48,6 +48,26 @@
     {
       "name": "diagnostico_ritmo_tcero",
       "description": "Explica por que as buscas podem estar falhando (limite de ritmo, bloqueio em curso, histórico). Não consulta o portal."
+    },
+    {
+      "name": "buscar_recibos_tcero",
+      "description": "Busca SEM rede nos recibos locais (o que esta máquina já leu do TCE-RO): ementa, dispositivo e texto do PDF gravados. Palavra inteira, \"frase\" e prefixo*, com posição no julgado e página aproximada. Zero aqui nunca é \"não há jurisprudência\"."
+    },
+    {
+      "name": "diagnostico_erros_tcero",
+      "description": "Resume o diário local de falhas das ferramentas (rede, portal, PDF, formato) e devolve o link de relato já preenchido. Só dado técnico, nunca o texto da busca. Não consulta o portal."
+    },
+    {
+      "name": "linha_do_tempo_tcero",
+      "description": "Conta, por ano e por órgão julgador, as decisões que casam uma consulta, com as duas mais pertinentes de cada ano (citação e link). Contagem do que o portal devolveu, não tendência da Corte."
+    },
+    {
+      "name": "sugerir_termos_tcero",
+      "description": "Sugere 10 a 20 palavras e pares distintivos das ementas que casaram a consulta, para montar `grupos`. Sugestão para curadoria, não para colar em bloco."
+    },
+    {
+      "name": "atualizar_extensao_tcero",
+      "description": "Só quando o usuário pedir: informa se há versão nova desta extensão e, com confirmar=true (depois do sim do usuário), baixa o .mcpb para Downloads com conferência SHA-256. Não instala nada."
     }
   ],
   "compatibility": {

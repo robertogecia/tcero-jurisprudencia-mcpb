@@ -215,13 +215,18 @@ export function entreAspas(bruto, tn, ini0, fim, cit = null) {
 // OBITER DICTUM? (espelho do TJRO 1.15.0 / _obiter_antes): marca contrafactual ou de fundamento alternativo na MESMA frase do trecho
 export const RE_OBITER = /(?<![a-z0-9])(?:ainda que assim nao fosse|se assim nao fosse|(?:ainda|mesmo) que (?:se )?(?:admitisse(?:mos)?|superad[ao]s?|ultrapassad[ao]s?|afastad[ao]s?|entendesse(?:mos)?|considerasse(?:mos)?|fosse|houvesse|pudesse)|a titulo de (?:argumentacao|reforco|ilustracao|obiter dictum)|(?:apenas|somente|so) para argumentar|ad argumentandum(?: tantum)?|por amor ao debate|obiter dictum|caso se entendesse|registre-se,? (?:por oportuno|de passagem)|a titulo de registro|apenas (?:para|a titulo de) registro)(?![a-z0-9])/g;
 export const OBITER_JANELA = 400, OBITER_CABECA = 0.4;
-export function obiterAntes(tn, ini0, fim, bruto) {
+/** v1.6.0 (_obiter_antes_com_pos): além da marca, ONDE ela está (posições no bruto; norm1 é 1:1). Devolve [marca, inicioDaFrase, posicaoDaMarca] ou null. */
+export function obiterAntesComPos(tn, ini0, fim, bruto) {
   const cabeca = ini0 + Math.trunc((fim - ini0) * OBITER_CABECA);
   const piso = Math.max(0, ini0 - OBITER_JANELA);
   const frase0 = inicioDaFrase(bruto, tn, piso, cabeca);
   let m = null;
   for (const x of tn.slice(frase0, cabeca).matchAll(RE_OBITER)) m = x;
-  return m ? m[0] : null;
+  return m ? [m[0], frase0, frase0 + m.index] : null;
+}
+export function obiterAntes(tn, ini0, fim, bruto) {
+  const r = obiterAntesComPos(tn, ini0, fim, bruto);
+  return r ? r[0] : null;
 }
 
 /** _trechos_obiter (recibo, 06/10/2026): da marca de obiter ao fim da frase, em BRUTO, fora de citação entre aspas. */
