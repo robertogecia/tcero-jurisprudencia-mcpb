@@ -9,7 +9,7 @@
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
 import { norm1, negacaoEscopo, negacaoProxima, entreAspas, obiterAntesComPos } from "./atribuicao13.js";
-import { posicaoTcero, RE_PAGINA_TC } from "./posicao2.js";
+import { posicaoTcero, RE_PAGINA_TC, secoesDaEmenta } from "./posicao2.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +31,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.6.0";
+export const VERSAO = "1.7.0";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
@@ -544,6 +544,8 @@ export function resumoItem(s, indice) {
   const link = corrigirLinkPdf(s.linkArquivo || "");
   if (link) linhas.push(`  Inteiro teor (PDF): ${link}`);
   linhas.push(`  Ementa (trecho): ${truncar(umaLinha(s.ementa || ""), EMENTA_TRECHO) || "—"}`);
+  const te = teseDaEmenta(ementaLimpa(s));
+  if (te) linhas.push("  " + linhaTese(te));
   for (const a of avisosCancelamentoVinculo(s)) linhas.push(`  ${a}`);
   return linhas;
 }
@@ -600,6 +602,10 @@ export function detalheItemBruto(s) {
     ementa = (i >= 0 ? c.slice(0, i) : c) + "… [CORTADO pelo orçamento de caracteres]";
   }
   linhas.push(`\n**Ementa (integral, literal do portal):**\n${ementa}`);
+  {
+    const te = teseDaEmenta(ementaLimpa(s));
+    if (te) linhas.push(linhaTese(te));
+  }
   const disp = neutralizarMarkdown(htmlParaTexto(s.acordaoDescricao || ""));
   if (disp) {
     linhas.push(`\n**Dispositivo (campo \`acordaoDescricao\`, literal):**\n${truncar(disp, ORCAMENTO_CAMPO)}`);
@@ -863,15 +869,22 @@ export function verificarTrecho(textos, trecho) {
       }
     }
     if (!faltando.length) {
+      const alertas = alertasAtribuicao(alvo, inicio, fim, texto, fragmentos);
+      const posicao = posicaoTceroTrecho(texto, alvo, inicio, fragmentos);
+      const pagina = paginaDoTrecho(texto, alvo, inicio, fragmentos);
+      const voz = alertaVozDaCasa(nome, posicao, pagina);
       return {
         valido: true,
         onde: nome,
         faltando: [],
         sem_texto: false,
         motivo: `trecho encontrado literalmente em: ${nome}`,
-        alertas: alertasAtribuicao(alvo, inicio, fim, texto, fragmentos),
-        posicao: posicaoTceroTrecho(texto, alvo, inicio, fragmentos),
-        pagina: paginaDoTrecho(texto, alvo, inicio, fragmentos),
+        // `alertas` só tem o que PEDE cautela (contrato da v1.6.0: [] = nada a avisar); VOZ DA CASA é o contrário, vai em `notas`
+        alertas,
+        // VOZ DA CASA cala quando há QUALQUER alerta de atribuição (parecer do MPC, alegação, transcrição…): as duas notas se contradiriam
+        notas: voz && !alertas.length ? [voz] : [],
+        posicao,
+        pagina,
       };
     }
     faltandoPorTexto[nome] = faltando;
@@ -1659,6 +1672,7 @@ export function linhasVerificacaoItem(s, trecho, textos) {
       linhas.push(`   ⚠️ trecho literal, porém atribuído a outra voz — conferir se é a posição da Corte: ${a}`);
     }
   }
+  if (r.valido) for (const nota of r.notas || []) linhas.push(`   ℹ ${nota}`); // v1.7.0: VOZ DA CASA
   if (r.valido && r.posicao) linhas.push(`   ℹ POSIÇÃO NO JULGADO: ${r.posicao}${r.pagina ? ` (${r.pagina})` : ""}.`);
   if (!r.valido && r.faltando && r.faltando.length) {
     for (const f of r.faltando.slice(0, 3)) {
@@ -1717,4 +1731,126 @@ export function resolverOrgao(orgao) {
       "encontrada, hardcoded no frontend do portal — não há endpoint de descoberta); a busca " +
       "exige o valor EXATO — se vier zero resultado, é provável que seja isso",
   ];
+}
+
+// --------------------------------------------------------------------------- //
+// v1.7.0 (15/10/2026) — porte do servidor_tcero.py v1.7.0 (commit 785c88a): tese da  //
+// ementa, VOZ DA CASA, placar, consulta pouco seletiva, corte por resultado. Só muda  //
+// a SAÍDA; o recibo (campos e serialização) é o da v1.6.0. Mesmas frases do Python.   //
+// --------------------------------------------------------------------------- //
+export const TESE_MAX = 1000;
+const RE_TESE_ROTULO = /\bteses? de julgamento ?:? ?/;
+const RE_ITEM_TESE = /(?<![^ ])\d{1,2}\. /g;
+const SECOES_COM_TESE = ["dispositivo e tese", "dispositivo", "entendimento"];
+const RE_ESPACOS_PY_L = /[ \t\n\r\f\v]+/g;
+
+/** _tese_da_ementa: tese enunciada na ementa do modelo novo ("Tese de julgamento: …"), LITERAL, ou null. Só procura nas seções
+ * (no TCE-RO ela vem sob "III. Entendimento"; no modelo do CNJ, sob "IV. Dispositivo e tese"). {texto, total, exibidos, completa}. */
+export function teseDaEmenta(texto, teto = TESE_MAX) {
+  const t = String(texto || "");
+  const secs = secoesDaEmenta(t, 0, t.length, true);
+  if (!secs.length) return null;
+  let tese = null;
+  for (const nome of SECOES_COM_TESE) {
+    for (const sec of secs.filter((x) => x.nome === nome)) {
+      const seg = t.slice(sec.a, sec.b);
+      const m = RE_TESE_ROTULO.exec(norm1(seg));
+      if (!m) continue;
+      const cand = seg.slice(m.index + m[0].length).replace(RE_ESPACOS_PY_L, " ").trim();
+      if (cand) {
+        tese = cand;
+        break;
+      }
+    }
+    if (tese) break;
+  }
+  if (!tese) return null;
+  const inicios = [...tese.matchAll(RE_ITEM_TESE)].map((mm) => mm.index);
+  const total = inicios.length >= 2 && inicios[0] < 5 ? inicios.length : 1;
+  if (tese.length <= teto) return { texto: tese, total, exibidos: total, completa: true };
+  if (total > 1) {
+    const ate = inicios.filter((p) => p > 0 && p <= teto);
+    if (ate.length) {
+      const p = ate[ate.length - 1];
+      return { texto: tese.slice(0, p).replace(/ +$/, ""), total, exibidos: inicios.indexOf(p), completa: false };
+    }
+  }
+  const fim = tese.slice(0, teto + 2).lastIndexOf(". ");
+  const corte = fim > 0 ? tese.slice(0, fim + 1) : tese.slice(0, teto).replace(/ \S*$/, "");
+  return { texto: corte.trim(), total, exibidos: 0, completa: false };
+}
+
+export function linhaTese(te) {
+  const inc = te.completa ? "" : " […]";
+  const aviso = te.completa
+    ? ""
+    : ` ⚠️ TESE INCOMPLETA: ${te.total > 1 ? `${te.exibidos} de ${te.total} itens` : "trecho parcial"}; abra o inteiro teor antes de fichar.`;
+  return (
+    "- TESE DA EMENTA (literal; tese enunciada pelo órgão, não prova de ratio; para aspas, confira com verificar_citacao_tcero): " +
+    `"${te.texto}${inc}"${aviso}`
+  );
+}
+
+/** _alerta_voz_da_casa: o trecho literal está na ementa, no dispositivo ou no fecho do PRÓPRIO acórdão (palavra do TCE-RO). */
+export function alertaVozDaCasa(nome, posicao, pagina = "") {
+  const nomeN = norm1(nome || "");
+  const posN = norm1(posicao || "");
+  let onde;
+  if (nomeN.startsWith("ementa") || nomeN.startsWith("dispositivo")) onde = nome;
+  else if (posN.startsWith("ementa") || posN.startsWith("acordao/fecho")) onde = posicao;
+  else return null;
+  return (
+    `VOZ DA CASA: o trecho está em ${onde}` +
+    (pagina ? ` (${pagina})` : "") +
+    " — é palavra do próprio TCE-RO (ementa, dispositivo ou fecho do acórdão), não transcrição dentro do voto " +
+    "(mesmo que o voto traga frase igual de outro julgado ou de parecer, esta ocorrência é da Corte)."
+  );
+}
+
+export const LIMIAR_POUCO_SELETIVA = 1000;
+
+export function avisoPoucoSeletiva(total) {
+  return (
+    `⚠️ Consulta pouco seletiva: o portal devolveu ${num(total)} decisões (OU entre as palavras) — a ordem por relevância ` +
+    "é só uma amostra do que casa. Restrinja por relator ou órgão julgador, ou por ano (o portal não tem filtro de ano: " +
+    "veja a distribuição em linha_do_tempo_tcero e leia só o período que interessa); use `grupos` para EXIGIR os conceitos."
+  );
+}
+
+/** _placar_consultas: fim da busca — consultas na janela do limitador e nível dele (dado que já existia). "" se o estado não lê. */
+export function placarConsultas(agora = Date.now()) {
+  try {
+    const e = comTrava(lerEstado);
+    const janelaMs = ESCADA_JANELA_MS[e.indiceJanela];
+    const n = (e.requisicoes || []).filter((t) => agora - t <= janelaMs).length;
+    const situacao = agora < e.bloqueadoAte ? "BLOQUEADO" : "livre";
+    return (
+      `\nPlacar: ${n} consulta(s) ao portal na janela de ${fmtHms(janelaMs)} (limite ${JANELA_MAX_REQS}) · ` +
+      `limitador: nível ${e.indiceJanela + 1}/${ESCADA_JANELA_MS.length}, ${situacao} (diagnostico_ritmo_tcero detalha).`
+    );
+  } catch {
+    return "";
+  }
+}
+
+const RE_CABECA_RESULTADO = /^\n(?:\*\*\d+\. |### )/;
+/** Cabeça de resultado de julgados_que_citam_tcero: a saída é partida em "\n", então a linha em branco antes do resultado é uma linha à parte. */
+export const RE_CABECA_CITACAO = /^[0-9]+\. [^\n]* · id /;
+
+/** _cortar_bloco_por_resultado: cortarBloco + recuo até o começo do resultado que ficou pela metade. */
+export function cortarBlocoPorResultado(linhas, teto, rotulo, cabeca = RE_CABECA_RESULTADO) {
+  const saida = cortarBloco(linhas, teto, rotulo);
+  if (!saida.length || !saida[saida.length - 1].startsWith("\n[SAÍDA CORTADA")) return saida;
+  let aviso = saida[saida.length - 1];
+  let corpo = saida.slice(0, -1);
+  let j = -1;
+  corpo.forEach((l, i) => {
+    if (cabeca.test(l)) j = i;
+  });
+  if (j > 0) {
+    const mostrados = corpo.slice(0, j).filter((l) => cabeca.test(l)).length;
+    corpo = corpo.slice(0, j);
+    aviso += ` Cortei na fronteira do resultado: ${mostrados} resultado(s) inteiro(s) acima; o seguinte ficou de fora (use por_pagina menor ou a página seguinte).`;
+  }
+  return [...corpo, aviso];
 }

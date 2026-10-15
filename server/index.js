@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as L from "./lib.js";
 import * as V from "./v160.js";
+import * as V7 from "./v170.js";
 import { baixarAtualizacao, textoAtualizacao, ErroAtualizacao } from "./atualizar.js";
 
 // --------------------------------------------------------------------------- //
@@ -628,7 +629,10 @@ async function buscar(textoLivre, numeroAcordao, numeroProcesso, relator, orgaoJ
     linhas.push(`**${total} decisão(ões)** no portal ePapyrus/TCE-RO para \`${filtrosTxt}\` · página ${pagina}/${totalPaginas} (${porPagina} por página) · ordenado ${ordemTxt}`);
   }
   for (const a of avisos) linhas.push(`⚠️ ${a}`);
-  if ((gruposOk.length ? totalBruto : total) > 200 && pagina === 1) {
+  const totalPortal = todosBrutos.length;
+  if (totalPortal >= L.LIMIAR_POUCO_SELETIVA && pagina === 1) {
+    linhas.push(L.avisoPoucoSeletiva(totalPortal));
+  } else if ((gruposOk.length ? totalBruto : total) > 200 && pagina === 1) {
     linhas.push(
       "Dica: total alto — a API do TCE-RO não pagina no servidor (tudo já foi baixado e " +
         "cacheado aqui por alguns minutos); restrinja com número de processo/acórdão, " +
@@ -696,7 +700,10 @@ async function buscar(textoLivre, numeroAcordao, numeroProcesso, relator, orgaoJ
   }
   if (total > pagina * porPagina) linhas.push(`\nPróxima página: pagina=${pagina + 1} (mesmos parâmetros).`);
   if (pagina === 1 && total >= 3) linhas.push(...L.blocoPanorama(todos, Boolean(gruposOk.length)));
-  return L.cortarBloco(linhas, L.ORCAMENTO_SAIDA, "resposta da busca").join("\n");
+  const saida = L.cortarBlocoPorResultado(linhas, L.ORCAMENTO_SAIDA, "resposta da busca");
+  const placar = L.placarConsultas();
+  if (placar) saida.push(placar);
+  return saida.join("\n");
 }
 
 async function obterAcordao(idDecisao, numeroAcordao, numeroProcesso, lerInteiroTeor, modo = "completo") {
@@ -1147,6 +1154,61 @@ server.registerTool(
   }
 );
 
+// v1.7.0 — julgados_que_citam_tcero: UMA consulta ao portal (frase entre aspas) + recibos locais (sem rede). Só o filtro local do número decide.
+async function julgadosQueCitam(numero, limite = 10) {
+  const c = V7.numeroCitado(numero);
+  if (!c) return "Informe o número no formato do portal, NNNNN/AA (1 a 5 dígitos, barra, 2 dígitos), de um processo ou de um acórdão. Nenhuma requisição foi feita.";
+  const [forma, n, aa] = c;
+  limite = Math.max(1, Math.min(parseInt(limite, 10) || 10, 50));
+  const info = {};
+  let portal = null;
+  try {
+    const dados = await _consultarApiImpl({ textoLivre: `"${forma}"` }, "citacoes");
+    const itens = dados.result || [];
+    [portal, info.proprias, info.sem_numero] = V7.citacoesNoPortal(itens, forma, n, aa);
+    info.total_portal = itens.length;
+  } catch (e) {
+    portal = null;
+    if (e instanceof PortalRecusou || e instanceof L.ErroEntrada || e?.constructor === Error) info.erro = L.umaLinha(String(e.message || e)).slice(0, 300);
+    else info.erro = `${e?.constructor?.name || "Error"}: ${L.umaLinha(String(e?.message || e)).slice(0, 200)}`;
+  }
+  const recibos = V7.citacoesNosRecibos(forma, n, aa);
+  const linhas = V7.formatarCitacoes(forma, portal, recibos, limite, info).split("\n");
+  // a linha "… e mais N" sai antes do corte e volta depois dele: o corte é em fronteira de resultado inteiro, e o "e mais" nunca se perde
+  const mais = linhas.filter((l) => l.startsWith("… e mais "));
+  const corpo = linhas.filter((l) => !l.startsWith("… e mais "));
+  const saida = [...L.cortarBlocoPorResultado(corpo, L.ORCAMENTO_SAIDA, "julgados_que_citam_tcero", L.RE_CABECA_CITACAO), ...mais];
+  const placar = L.placarConsultas(); // a ferramenta faz UMA consulta ao portal: o placar diz onde está o limitador
+  if (placar) saida.push(placar);
+  return saida.join("\n");
+}
+
+server.registerTool(
+  "julgados_que_citam_tcero",
+  {
+    title: "Julgados que citam um processo ou acórdão (TCE-RO)",
+    description:
+      "Julgados do TCE-RO que CITAM um processo ou um acórdão pelo número (NNNNN/AA), com o trecho em volta. " +
+      "UMA consulta ao portal (frase entre aspas no texto livre) + busca SEM REDE nos recibos locais; cada achado diz de qual fonte veio (portal ou recibo local). " +
+      "LEITURA ASSISTIDA: serve para ver como o precedente é tratado depois dele. NÃO detecta superação nem distinção. ZERO RESULTADO NÃO PROVA que ninguém o aplicou: " +
+      "o portal indexa texto (ementa, dispositivo e informações adicionais) e o PDF do inteiro teor NÃO é varrido, então o recall é baixo; citação por extenso ou sem a forma " +
+      "NNNNN/AA não é achada. Os recibos cobrem só o que esta máquina já leu. O portal casa por OU quando não honra a frase; por isso só se listam as decisões que trazem o número no texto devolvido.",
+    inputSchema: {
+      numero: z.string().describe('Número do processo ou do acórdão julgado citado, no formato do portal, ex.: "00037/23" ou "37/23".'),
+      limite: z.number().int().optional().describe("Quantos achados mostrar (1 a 50; padrão 10)."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  async (a) => {
+    try {
+      const texto = await V.comDiario("julgados_que_citam_tcero", { numero: a.numero, limite: a.limite }, () => julgadosQueCitam(a.numero, a.limite ?? 10));
+      return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: L.finalizarSaida(formatarErroPortal(e, `Erro ao consultar o portal do TCE-RO (${e.constructor.name})`)) }], isError: true };
+    }
+  }
+);
+
 server.registerTool(
   "diagnostico_erros_tcero",
   {
@@ -1282,4 +1344,4 @@ export function _limparCachesParaTeste() {
   cacheBytes = 0;
   cachePdf.clear();
 }
-export { buscar, obterAcordao, verificarCitacao, linhaDoTempoAsync, sugerirTermosAsync, consultaFiltrada, extrairTextoPdf, formatarErroPortal };
+export { julgadosQueCitam, buscar, obterAcordao, verificarCitacao, linhaDoTempoAsync, sugerirTermosAsync, consultaFiltrada, extrairTextoPdf, formatarErroPortal };

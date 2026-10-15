@@ -26,6 +26,17 @@ o que você recebe em cada busca (decisões mais pertinentes primeiro, citação
 inteiro teor, conferência de citação, recibo), o que ela não substitui, e a tabela "algo deu
 errado".
 
+## O que há de novo na 1.7.0 (explicado para advogado)
+
+- **"Quem citou este julgado depois?"** Dê o número de um processo ou de um acórdão (por exemplo `00037/23`) e a extensão mostra os acórdãos que o citam, com o trecho em volta, e diz de onde veio cada achado: do que o portal do tribunal indexa ou dos acórdãos que já passaram por este computador (esses, sem internet). **É leitura assistida, não confirmação.** Ela **não detecta superação** (não diz se o julgado citado foi superado ou distinguido) e **resultado zero não prova que ninguém o aplicou**: o portal só indexa o texto da ementa, do dispositivo e das informações adicionais, e o PDF do inteiro teor não é varrido, então muita citação só aparece lá dentro e não é achada. Se o portal estiver fora do ar, a resposta diz `[PESQUISA NÃO REALIZADA no portal]` e mostra só o que há nos recibos locais.
+- **A tese da ementa, literal.** Quando a ementa segue o modelo novo ("Tese de julgamento: ..."), a busca, a triagem e a leitura completa mostram a tese entre aspas, tal como está. Se ela é longa e foi cortada, vem o aviso **TESE INCOMPLETA** e a orientação de abrir o inteiro teor. Ementa do modelo antigo não mostra nada. A tese da ementa é o que o órgão enunciou, **não prova de que foi a razão de decidir**, e **para pôr entre aspas continua valendo a conferência de `verificar_citacao_tcero`**.
+- **"VOZ DA CASA".** Ao conferir um trecho, se ele está na ementa, no dispositivo ou no fecho do próprio acórdão, a extensão avisa que ali quem fala é o TCE-RO, e não um parecer ou outro julgado transcrito dentro do voto. É o contrário dos avisos amarelos: é um sinal de que a frase é da Corte.
+- **Placar no fim da busca.** Quantas consultas ao portal você já fez na janela do limitador e em que nível ele está, para saber quanto ainda pode pesquisar antes de a extensão pedir uma pausa.
+- **Aviso de consulta pouco seletiva.** Quando o portal devolve mil decisões ou mais (as palavras entram em OU), a busca diz que o topo é só uma amostra e sugere restringir por relator, órgão julgador ou ano, ou exigir os conceitos com `grupos`.
+- **Resposta que nunca vem cortada no meio de uma decisão.** O teto de 60 mil caracteres já existia; agora, se a busca precisa cortar, ela corta no limite de uma decisão e diz até onde mostrou.
+- **Correção de um número.** As palavras sugeridas por `sugerir_termos_tcero` (1.6.0) foram avaliadas por dois leitores independentes, sem ver a opinião um do outro: **26% das sugestões são pertinentes nos dois** (28 de 107) e 37% em pelo menos um. Use uma sugestão por vez, com o seu critério. (O número de 59% que circulou antes era leitura de um avaliador só e não vale.)
+- Os recibos continuam **exatamente** como na 1.6.0: nada mudou no que fica gravado.
+
 ## O que há de novo na 1.6.0 (explicado para advogado)
 
 - **Achar o que você já leu, sem internet:** peça "procure nos recibos locais por *dano ao erário*". Ela olha só os acórdãos que já passaram por este computador (ementa, dispositivo e voto, quando o PDF foi lido). Resultado zero **não** quer dizer que o TCE-RO nunca decidiu o tema.

@@ -357,7 +357,7 @@ for (const [n, t] of Object.entries(IN.textos)) {
   const res = { sem_texto: false, paginas: 9, parcial: false };
   out.pdf[n] = { est: V.estruturaPdfTcero(t), fecho: V.fechoDoPdf(t), al: V.alertasDeTriagem(t), lin: V.linhasTriagemPdf(t, res), pos: [0, 500, 20000, 60000].map((p) => [P.posicaoTcero(t, Math.min(p, t.length - 1)), L.paginaPdfTcero(t, Math.min(p, t.length - 1))]) };
 }
-out.trechos = IN.trechos.map(([n, tr]) => { const r = L.verificarTrecho({ t: IN.textos[n] }, tr); return [r.valido, r.alertas, r.posicao || "", r.pagina || ""]; });
+out.trechos = IN.trechos.map(([n, tr]) => { const r = L.verificarTrecho({ t: IN.textos[n] }, tr); return [r.valido, r.alertas, r.posicao || "", r.pagina || "", r.notas || []]; });
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -426,7 +426,7 @@ def paridade_v160(tmp):
     py["trechos"] = []
     for n, tr in trechos:
         r = m._verificar_trecho({"t": textos[n]}, tr)
-        py["trechos"].append([r["valido"], r["alertas"], r.get("posicao") or "", r.get("pagina") or ""])
+        py["trechos"].append([r["valido"], r["alertas"], r.get("posicao") or "", r.get("pagina") or "", r.get("notas") or []])
 
     entrada = {"sanitizar": SANITIZAR, "args": ARGS, "msgs": MSGS, "saidas": SAIDAS, "entradas": ENTRADAS, "queries": QUERIES_REC, "dirRec": dir_rec, "itens": ITENS_LT,
                "lt": LT_E2E, "sug": SUG_E2E, "c2": c2, "s98114": s98114, "pdf98114": PDF_98114, "textos": textos, "trechos": trechos}
@@ -464,6 +464,175 @@ def paridade_v160(tmp):
     return total, dif, natureza
 
 
+# --------------------------------------------------------------------------- #
+# v1.7.0 — TESE DA EMENTA, VOZ DA CASA, julgados_que_citam_tcero, placar,        #
+# consulta pouco seletiva, corte por resultado. MESMOS casos nos dois lados;     #
+# zero rede. As 1.141 ementas da fixture exp_C2 passam todas pela tese.          #
+# --------------------------------------------------------------------------- #
+ITENS_TESE = "".join((" " if k > 1 else "") + f"{k}. Texto da tese número {k}, " + "palavra " * 40 + "fim." for k in range(1, 9))
+EMENTAS_TESE = [
+    "I. Caso em exame\r\nA.\r\nII. Questão em discussão\r\nB.\r\nIII. Razões de decidir\r\nC.\r\nIV. Dispositivo e tese\r\nTese de julgamento: " + ITENS_TESE,
+    "I. Caso em exame\r\nA.\r\nIV. Dispositivo e tese\r\nTese de julgamento: " + "Frase longa sem itens numerados. " * 60,
+    "I. Caso em exame\r\nA.\r\nIV. Dispositivo e tese\r\nTese de julgamento: 1. Primeira. 2. Segunda. 3. Terceira.",
+    "I. Caso em exame\r\nA.\r\nIII. Entendimento: Procedente.\r\nTese de julgamento:\r\nUma tese curta.\r\nIV. Fundamento: art. 1.",
+    "PRESTAÇÃO DE CONTAS. REGULARIDADE.\r\n1. Contas regulares.\r\n2. Tese de julgamento: não vale fora de seção.",
+    "I. Caso em exame\r\nResumo.\r\nII. Questão em discussão\r\nPergunta.\r\nIII. Entendimento: Procedente.\r\nIV. Fundamento: art. 1.",
+    "", "<p>I. Caso em exame</p><p>A.</p><p>III. Entendimento</p><p>Teses de julgamento: A tese &eacute; esta.</p>",
+]
+VOZ_CASOS = [("ementa", "", ""), ("dispositivo (acordaoDescricao)", "", "p. ~1 de 3 do PDF"), ("texto (recibo)", "ementa › III. ENTENDIMENTO — a tese", "p. ~2 de 9 do PDF"),
+             ("texto (recibo)", "acórdão/fecho (o que o colegiado proclamou)", ""), ("texto (recibo)", "fundamentação do voto condutor", ""), ("texto (recibo)", "", ""), ("", "", "")]
+NUMEROS_CIT = ["37/23", " 00037/23 ", "02603/22", "37", "37/2023", "abc/23", "123456/23", "37-23", "02603/22/TCE", "0/00", "00000/22", "1136/22", "10/23"]
+TEXTOS_CIT = ["Acórdão APL-TC 00037/23, rel.", "APLTC 37/23.", "(00037/23)", "Proc. 00037/23/TCE-RO", "n. 0037 / 23", "100037/23", "00037/2023", "dia 15/37/23",
+              "x/00037/23", "00037/230", "00037/23/24", "Processo n. 01136/22/TCE-RO", "em 15/10/23", "a " * 300 + "Acórdão APL-TC 00037/23 diz. Também 00037/23 de novo. " + "b " * 300,
+              "00037/23 " + "x " * 400 + "37/23 " + "y " * 400 + "0037/23 " + "z " * 400 + "00037/23"]
+CITAM_E2E = ["37/23", "02603/22", "00055/26", "1/26", "99999/99", "37 de 2023", "00037/23"]
+
+NODE_V170 = r"""
+import fs from "node:fs";
+const base = %(base)s;
+const L = await import(base + "lib.js"), V7 = await import(base + "v170.js"), idx = await import(base + "index.js");
+const IN = JSON.parse(fs.readFileSync(process.argv[2], "utf-8"));
+const C2 = IN.c2; const out = {};
+const tese = (t) => { const te = L.teseDaEmenta(L.ementaLimpa({ ementa: t })); return te ? [te, L.linhaTese(te)] : null; };
+out.tese_casos = IN.ementas.map(tese);
+out.tese_c2 = C2.result.map((i) => tese(i.source.ementa || ""));
+out.tese_busca = IN.itens_busca.map((s) => [L.resumoItem(s, 1), L.detalheItem(s)]);
+out.voz = IN.voz.map(([n, p, g]) => L.alertaVozDaCasa(n, p, g));
+out.voz_trechos = IN.voz_trechos.map(([t, tr]) => { const r = L.verificarTrecho({ ementa: t }, tr); return [r.valido, r.notas || [], r.alertas, L.linhasVerificacaoItem({ idDecisao: 1, sigla: "X", numero: "1/1" }, tr, { ementa: t })]; });
+out.numero = IN.numeros.map((n) => V7.numeroCitado(n));
+out.janelas = IN.textos_cit.map((t) => V7.janelasDeCitacaoTcero(t, "37", "23"));
+out.regex = IN.textos_cit.map((t) => [V7.regexNumeroCitado("37", "23").test(t), V7.regexNumeroCitado("1136", "22").test(t), V7.regexNumeroCitado("15", "10").test(t)]);
+out.aviso = L.avisoPoucoSeletiva(1141);
+out.placar = [L.placarConsultas(1760500000000)];
+out.formatar = [];
+const [forma, n, aa] = V7.numeroCitado("37/23");
+const [ach, pro, sem] = V7.citacoesNoPortal(C2.result, forma, n, aa);
+out.portal_cont = [ach.length, pro, sem, ach.map((h) => [h.s.idDecisao, h.janelas])];
+out.recibos_cit = V7.citacoesNosRecibos(forma, n, aa, IN.dirRec).map((h) => [h.s, h.janelas]);
+out.formatar = [V7.formatarCitacoes(forma, ach, V7.citacoesNosRecibos(forma, n, aa, IN.dirRec), 10, { total_portal: C2.result.length, proprias: pro, sem_numero: sem }),
+                V7.formatarCitacoes(forma, null, V7.citacoesNosRecibos(forma, n, aa, IN.dirRec), 3, { erro: "portal fora do ar" }),
+                V7.formatarCitacoes("99999/99", [], [], 10, { total_portal: 0, proprias: 0, sem_numero: 0 })];
+out.citam = [];
+idx._setDepsParaTeste({ consultarApi: async () => C2 });
+for (const q of IN.citam) out.citam.push(await idx.julgadosQueCitam(q, 10));
+out.citam_limite = [await idx.julgadosQueCitam("37/23", 2), await idx.julgadosQueCitam("37/23", 500)];
+idx._setDepsParaTeste({ consultarApi: async () => { throw new Error("portal fora do ar"); } });
+out.citam_falha = await idx.julgadosQueCitam("37/23", 10);
+idx._setDepsParaTeste({ consultarApi: async () => C2 });
+idx._limparCachesParaTeste();
+out.busca_grande = [await idx.buscar("reincidência multa", null, null, null, null, 1, 10, false), await idx.buscar("reincidência multa", null, null, null, null, 2, 10, false),
+                    await idx.buscar(null, null, null, null, null, 1, 5, false, [["multa", "multas"], ["reincidência"]])];
+for (const k of [300, 50]) { idx._setDepsParaTeste({ consultarApi: async () => ({ result: C2.result.slice(0, k) }) }); idx._limparCachesParaTeste(); out["busca_" + k] = await idx.buscar("reincidência multa", null, null, null, null, 1, 5, false); }
+const gordos = { result: Array.from({ length: 50 }, (_, k) => ({ source: { ...IN.s98114, idDecisao: 100 + k, ementa: "X".repeat(11000), acordaoDescricao: "<p>" + "Y".repeat(11000) + "</p>" } })) };
+idx._setDepsParaTeste({ consultarApi: async () => gordos }); idx._limparCachesParaTeste();
+out.busca_corte = await idx.buscar(null, null, "02603/22", null, null, 1, 50, true);
+out.cortar = [L.cortarBlocoPorResultado(["cab", "\n**1. A**", "x", "\n**2. B**", "y"], 10000, "t"), L.cortarBlocoPorResultado(["cab", "\n**1. A**", "x".repeat(50), "\n**2. B**", "y".repeat(50), "\n### C", "z"], 120, "t"),
+  L.cortarBlocoPorResultado(["cab", "x".repeat(200)], 100, "t")];
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def paridade_v170(tmp):
+    """Devolve (casos, divergentes, natureza)."""
+    sys.dont_write_bytecode = True
+    _garantir_fonte_python()
+    est = os.path.join(tmp, "estado_v170"); dir_rec = os.path.join(tmp, "rec_v170"); os.makedirs(dir_rec)
+    for k, v in (("TCERO_MCP_DIR_ESTADO", est), ("TCERO_MCP_DIR_RECIBOS", dir_rec), ("TCERO_MCP_SEM_AVISO_ATUALIZACAO", "1")):
+        os.environ[k] = v
+    spec = importlib.util.spec_from_file_location("servidor_tcero_v170", PY_SOURCE)
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    m.DIR_RECIBOS = dir_rec
+    m._ARQUIVO_ESTADO_DISJUNTOR = os.path.join(tmp, "disj_py_v170.json")   # nunca o estado real do limitador
+    c2 = json.loads(gzip.open(os.path.join(FIXTURES, "exp_C2_controle_or.json.gz")).read().decode("utf-8"))
+    s98114 = next(i["source"] for i in FIX_ID["result"] if i["source"]["idDecisao"] == 98114)
+    # recibos que citam 37/23 (gravados pelo Python; os dois lados só LEEM esta pasta)
+    ia = {"idDecisao": 11111, "sigla": "AC2-TC", "numero": "00001/26", "processo": "00002/25", "relator": "MARIA SINTETICA", "orgaoJulgador": "2ª Câmara",
+          "dataSessao": "2026-02-02T00:00:00", "ementa": "Ementa cita o Acórdão APL-TC 00037/23 e outro.", "acordaoDescricao": "<p>Dispositivo.</p>",
+          "informacoesAdicionais": "<p>Aplicou o precedente do Acórdão APL-TC 00037/23 ao caso.</p>"}
+    m._gravar_recibo_tcero(ia)
+    m._gravar_recibo_tcero({"idDecisao": 22222, "sigla": "AC1-TC", "numero": "00003/26", "processo": "00004/25", "relator": "FULANO", "orgaoJulgador": "1ª Câmara",
+                            "dataSessao": "2026-03-03T00:00:00", "ementa": "Contas. Aplica a Súmula; cf. Processo 37/23 (precedente).", "acordaoDescricao": "<p>x</p>"})
+    m._gravar_recibo_tcero({"idDecisao": 33333, "sigla": "AC1-TC", "numero": "00037/23", "processo": "00009/20", "relator": "O PROPRIO", "orgaoJulgador": "Pleno",
+                            "dataSessao": "2023-03-03T00:00:00", "ementa": "O próprio: cf. 37/23.", "acordaoDescricao": "<p>x</p>"})
+    m._gravar_recibo_tcero(s98114)
+    ementas_busca = [s98114, {"idDecisao": 5, "situacao": 1, "sigla": "AC1-TC", "numero": "1/20", "ementa": EMENTAS_TESE[4]}, {"idDecisao": 6, "situacao": 1, "sigla": "AC1-TC", "numero": "1/20", "ementa": EMENTAS_TESE[0]},
+                     {"idDecisao": 7, "situacao": 1, "sigla": "AC1-TC", "numero": "1/20", "ementa": EMENTAS_TESE[3]}]
+    voz_trechos = [["Contas regulares com ressalvas, nos termos do voto do relator, determinando o arquivamento.", "Contas regulares com ressalvas, nos termos do voto do relator"],
+                   ["Conforme decidiu o STJ, a responsabilidade e solidaria entre os gestores nos casos de dano ao erario.", "a responsabilidade e solidaria entre os gestores"],
+                   ["x", "nada disto está no texto da ementa"]]
+    py = {}
+    tese = lambda t: (lambda te: [te, m._linha_tese(te)] if te else None)(m._tese_da_ementa(m._ementa_limpa({"ementa": t})))
+    py["tese_casos"] = [tese(t) for t in EMENTAS_TESE]
+    py["tese_c2"] = [tese(i["source"].get("ementa") or "") for i in c2["result"]]
+    py["tese_busca"] = [[m._resumo_item(s, 1), m._detalhe_item(s)] for s in ementas_busca]
+    py["voz"] = [m._alerta_voz_da_casa(*a) for a in VOZ_CASOS]
+    def _vt(t, tr):
+        r = m._verificar_trecho({"ementa": t}, tr)
+        return [r["valido"], r.get("notas") or [], r["alertas"], m._linhas_verificacao_item({"idDecisao": 1, "sigla": "X", "numero": "1/1"}, tr, {"ementa": t})]
+    py["voz_trechos"] = [_vt(*x) for x in voz_trechos]
+    py["numero"] = [m._numero_citado(n) for n in NUMEROS_CIT]
+    py["janelas"] = [m._janelas_de_citacao_tcero(t, "37", "23") for t in TEXTOS_CIT]
+    py["regex"] = [[bool(m._regex_numero_citado("37", "23").search(t)), bool(m._regex_numero_citado("1136", "22").search(t)), bool(m._regex_numero_citado("15", "10").search(t))] for t in TEXTOS_CIT]
+    py["aviso"] = m._aviso_pouco_seletiva(1141)
+    py["placar"] = [m._placar_consultas(1760500000.0)]
+    forma, n, aa = m._numero_citado("37/23")
+    ach, pro, sem = m._citacoes_no_portal(c2["result"], forma, n, aa)
+    py["portal_cont"] = [len(ach), pro, sem, [[h["s"].get("idDecisao"), h["janelas"]] for h in ach]]
+    rec = m._citacoes_nos_recibos(forma, n, aa, dir_rec)
+    py["recibos_cit"] = [[h["s"], h["janelas"]] for h in rec]
+    py["formatar"] = [m._formatar_citacoes(forma, ach, m._citacoes_nos_recibos(forma, n, aa, dir_rec), 10, {"total_portal": len(c2["result"]), "proprias": pro, "sem_numero": sem}),
+                      m._formatar_citacoes(forma, None, m._citacoes_nos_recibos(forma, n, aa, dir_rec), 3, {"erro": "portal fora do ar"}),
+                      m._formatar_citacoes("99999/99", [], [], 10, {"total_portal": 0, "proprias": 0, "sem_numero": 0})]
+
+    async def api_c2(params, op):
+        return c2
+    m._consultar_api = api_c2
+    py["citam"] = [asyncio.run(m._julgados_que_citam(q, 10)) for q in CITAM_E2E]
+    py["citam_limite"] = [asyncio.run(m._julgados_que_citam("37/23", 2)), asyncio.run(m._julgados_que_citam("37/23", 500))]
+
+    async def api_cai(params, op):
+        raise RuntimeError("portal fora do ar")
+    m._consultar_api = api_cai
+    py["citam_falha"] = asyncio.run(m._julgados_que_citam("37/23", 10))
+    m._consultar_api = api_c2; m._cache_limpar()
+    py["busca_grande"] = [asyncio.run(m._buscar("reincidência multa", None, None, None, None, 1, 10, False)), asyncio.run(m._buscar("reincidência multa", None, None, None, None, 2, 10, False)),
+                          asyncio.run(m._buscar(None, None, None, None, None, 1, 5, False, [["multa", "multas"], ["reincidência"]]))]
+    for k in (300, 50):
+        async def api_k(params, op, k=k):
+            return {"result": c2["result"][:k]}
+        m._consultar_api = api_k; m._cache_limpar()
+        py[f"busca_{k}"] = asyncio.run(m._buscar("reincidência multa", None, None, None, None, 1, 5, False))
+    gordos = {"result": [{"source": dict(s98114, idDecisao=100 + k, ementa="X" * 11000, acordaoDescricao="<p>" + "Y" * 11000 + "</p>")} for k in range(50)]}
+    async def api_g(params, op):
+        return gordos
+    m._consultar_api = api_g; m._cache_limpar()
+    py["busca_corte"] = asyncio.run(m._buscar(None, None, "02603/22", None, None, 1, 50, True))
+    py["cortar"] = [m._cortar_bloco_por_resultado(["cab", "\n**1. A**", "x", "\n**2. B**", "y"], 10000, "t"), m._cortar_bloco_por_resultado(["cab", "\n**1. A**", "x" * 50, "\n**2. B**", "y" * 50, "\n### C", "z"], 120, "t"),
+                    m._cortar_bloco_por_resultado(["cab", "x" * 200], 100, "t")]
+
+    entrada = {"ementas": EMENTAS_TESE, "c2": c2, "itens_busca": ementas_busca, "voz": VOZ_CASOS, "voz_trechos": voz_trechos, "numeros": NUMEROS_CIT, "textos_cit": TEXTOS_CIT,
+               "dirRec": dir_rec, "citam": CITAM_E2E, "s98114": s98114}
+    arq_in = os.path.join(tmp, "in_v170.json"); arq_js = os.path.join(tmp, "v170.mjs")
+    json.dump(entrada, open(arq_in, "w", encoding="utf-8"), ensure_ascii=False)
+    open(arq_js, "w", encoding="utf-8").write(NODE_V170 % {"base": json.dumps("file://" + os.path.dirname(INDEX_JS) + "/")})
+    env = dict(os.environ); env["TCERO_MCP_DIR_ESTADO"] = os.path.join(tmp, "estado_v170_node"); env["TCERO_MCP_DIR_RECIBOS"] = dir_rec
+    r = subprocess.run(["node", arq_js, arq_in], capture_output=True, text=True, env=env)
+    if r.returncode:
+        sys.exit("Node v170 falhou:\n" + r.stderr)
+    nd = json.loads(r.stdout)
+
+    dif, natureza, total = 0, {}, 0
+    for chave in py:
+        itens = [(f"{chave}[{i}]", nd[chave][i], v) for i, v in enumerate(py[chave])] if isinstance(py[chave], list) else [(chave, nd[chave], py[chave])]
+        for nome, a, b in itens:
+            total += 1
+            # tuplas do Python viram listas no JSON; os dicts da tese e os pares (nome, janela) são comparados como JSON canônico
+            if json.dumps(a, ensure_ascii=False, sort_keys=True) != json.dumps(b, ensure_ascii=False, sort_keys=True, default=lambda o: sorted(o) if isinstance(o, set) else str(o)):
+                dif += 1; natureza[nome] = "DIVERGENTE"
+                print("DIFERE", nome); print("  node:", json.dumps(a, ensure_ascii=False)[:600]); print("  py:  ", json.dumps(b, ensure_ascii=False, default=str)[:600])
+    return total, dif, natureza
+
+
 def sem_g(t):
     return re.sub(r"gravado em \d{4}-\d{2}-\d{2}T[\d:+\-]+", "gravado em <ts>", t or "")
 
@@ -480,6 +649,7 @@ def main():
         py = rodar_lado_python(dir_py)
         node = rodar_lado_node(dir_node, dir_node_vazio)
         tot160, dif160, nat160 = paridade_v160(tmp)
+        tot170, dif170, nat170 = paridade_v170(tmp)
 
     dif = 0
     natureza = {}
@@ -588,9 +758,10 @@ def main():
             dif += 1
             natureza["recibo_hashes"] = "texto idêntico mas hash difere — bug de serialização, investigar"
 
-    dif += dif160
+    dif += dif160 + dif170
     natureza.update({"v160:" + k: v for k, v in nat160.items()})
-    total = len(CASOS_BUSCA) + 2 + 2 + 1 + tot160  # buscas + obter(2) + verificar(2) + recibo + v1.6.0
+    natureza.update({"v170:" + k: v for k, v in nat170.items()})
+    total = len(CASOS_BUSCA) + 2 + 2 + 1 + tot160 + tot170  # buscas + obter(2) + verificar(2) + recibo + v1.6.0 + v1.7.0
     print(f"\ncasos {total} · divergentes reais {dif}")
     if natureza:
         print("Natureza de cada item com diferença (real ou cosmética):")

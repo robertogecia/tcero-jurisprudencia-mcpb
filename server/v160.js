@@ -1054,6 +1054,10 @@ export function triagemDecisao(s, brutoPdf = null, resultadoPdf = null, avisoPdf
     ementa = (i >= 0 ? corte.slice(0, i) : corte) + "… [CORTADO pelo orçamento de caracteres]";
   }
   linhas.push(`\n**Ementa (integral, literal do portal):**\n${ementa}`);
+  {
+    const te = L.teseDaEmenta(L.ementaLimpa(s));
+    if (te) linhas.push(L.linhaTese(te));
+  }
   const disp = L.neutralizarMarkdown(L.htmlParaTexto(s.acordaoDescricao || ""));
   if (disp) linhas.push(`\n**Dispositivo (campo \`acordaoDescricao\`, literal):**\n${L.truncar(disp, L.ORCAMENTO_CAMPO)}`);
   else linhas.push("\nDispositivo (`acordaoDescricao`): não informado pelo portal para esta decisão.");
