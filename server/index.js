@@ -12,6 +12,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import * as L from "./lib.js";
 
 // --------------------------------------------------------------------------- //
@@ -1020,7 +1023,15 @@ server.registerTool(
 // Só conecta o transporte quando executado diretamente (`node server/index.js`), nunca quando
 // importado — necessário para o harness de paridade (test/paridade.py) e para testes Node
 // importarem `buscar`/`obterAcordao`/`verificarCitacao` sem subir um servidor MCP de verdade.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// Comparação por CAMINHO, não por texto da URL: `import.meta.url` codifica espaço como %20 e
+// `process.argv[1]` não. O Claude Desktop instala a extensão em ".../Application Support/Claude/
+// Claude Extensions/..." (com espaços), então a versão antiga nunca conectava o transporte lá —
+// processo vivo, `initialize` sem resposta, "Request timed out" após 60 s (log de 06–15/10/2026).
+// O smoke test só passava porque rodava em ~/MCP, sem espaço.
+function mesmoArquivo(a, b) {
+  try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return path.resolve(a) === path.resolve(b); }
+}
+if (process.argv[1] && mesmoArquivo(fileURLToPath(import.meta.url), process.argv[1])) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

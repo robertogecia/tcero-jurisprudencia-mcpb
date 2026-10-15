@@ -223,3 +223,13 @@ Irmão dos pacotes de jurisprudência do [TJRO](https://github.com/robertogecia/
 ## Licença
 
 MIT — veja [LICENSE](LICENSE).
+
+## v1.5.3 — 14/10/2026: o pacote não respondia no Claude Desktop
+
+Log do Desktop (06–15/10/2026): servidor sobe, recebe `initialize` e fica mudo; "Request timed out"
+após 60 s, em toda sessão. Causa: a guarda que decide se o `index.js` conecta o transporte comparava
+`import.meta.url` com `process.argv[1]` como texto — a URL codifica espaço como `%20`, o argv não, e o
+Desktop instala a extensão em `.../Application Support/Claude/Claude Extensions/...`. Em `~/MCP`
+(sem espaço) sempre funcionou, por isso o smoke test nunca pegou. Agora compara por `realpath`
+(`test/stdio_caminho_com_espaco.test.js` sobe o servidor de uma pasta com espaço e exige a resposta;
+falha no código antigo). Lição herdada do TJRO, que conecta sem guarda nenhuma.

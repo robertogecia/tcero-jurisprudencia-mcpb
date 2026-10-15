@@ -31,7 +31,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.5.2";
+export const VERSAO = "1.5.3";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
