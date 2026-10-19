@@ -2,6 +2,10 @@
 
 O histórico anterior (1.2.0 a 1.5.3) está no fim do `README.md`.
 
+## 1.7.1
+
+A descrição da extensão, mostrada ao instalar ou atualizar, agora diz quem a criou e, em linguagem simples, o que ela faz. Nenhuma ferramenta mudou.
+
 ## 1.7.0 — 15/10/2026
 
 Porte Node do `servidor_tcero.py` v1.7.0 (commit 785c88a). Só muda a saída das ferramentas; o recibo é o da 1.6.0 (21 campos, mesma ordem e serialização; teste compara byte a byte com um recibo gravado pela 1.6.0, `test/fixtures/recibo_v160_98114.json`). Mesmas frases do Python.
