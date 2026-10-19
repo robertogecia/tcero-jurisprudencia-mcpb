@@ -2,6 +2,10 @@
 
 O histórico anterior (1.2.0 a 1.5.3) está no fim do `README.md`.
 
+## 1.7.2
+
+O subtítulo da extensão agora traz o crédito do autor e a descrição foi reescrita em parágrafos, em linguagem acessível a advogados. Nenhuma ferramenta mudou.
+
 ## 1.7.1
 
 A descrição da extensão, mostrada ao instalar ou atualizar, agora diz quem a criou e, em linguagem simples, o que ela faz. Nenhuma ferramenta mudou.
