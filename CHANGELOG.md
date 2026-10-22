@@ -2,6 +2,10 @@
 
 O histórico anterior (1.2.0 a 1.5.3) está no fim do `README.md`.
 
+## 1.7.4
+
+A checagem de versão nova agora acontece no máximo uma vez por semana: a extensão registra a data da última checagem no seu computador e, nas outras sessões, só lembra da versão já vista. Nada da pesquisa sai do computador.
+
 ## 1.7.3
 
 O campo autor da extensão agora mostra @robertogrecia. Nenhuma ferramenta mudou.

@@ -18,12 +18,14 @@ import { fileURLToPath } from "node:url";
 import * as L from "./lib.js";
 import * as V from "./v160.js";
 import * as V7 from "./v170.js";
+import { checarSemanal } from "./semana.js";
+import os from "node:os";
 import { baixarAtualizacao, textoAtualizacao, ErroAtualizacao } from "./atualizar.js";
 
 // --------------------------------------------------------------------------- //
 // Checagem de versão nova — dispara em 2º plano, nunca aguardada.             //
 // --------------------------------------------------------------------------- //
-async function checarVersaoNova(timeoutMs = 5000) {
+async function consultarUltimaTag(timeoutMs = 5000) {
   if (process.env.TCERO_MCP_SEM_AVISO_ATUALIZACAO === "1") return null;
   try {
     const ctrl = new AbortController();
@@ -37,7 +39,7 @@ async function checarVersaoNova(timeoutMs = 5000) {
     const json = await r.json();
     const tag = String(json?.tag_name || "").trim();
     const tagLimpa = tag.startsWith("v") ? tag.slice(1) : tag;
-    return L.versaoMaisNova(L.VERSAO, tagLimpa) ? tagLimpa : null;
+    return /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(tagLimpa) ? tagLimpa : null;
   } catch {
     return null;
   }
@@ -46,7 +48,12 @@ async function checarVersaoNova(timeoutMs = 5000) {
 function iniciarChecagemVersao() {
   if (L.estadoVersao.tarefaIniciada) return;
   L.estadoVersao.tarefaIniciada = true;
-  checarVersaoNova()
+  if (process.env.TCERO_MCP_SEM_AVISO_ATUALIZACAO === "1") return;
+  // Uma consulta por semana; nas demais sessões a sugestão sai do registro local (ver semana.js).
+  checarSemanal({
+    arquivo: process.env.TCERO_MCP_ARQUIVO_AVISO_VERSAO || path.join(os.homedir(), ".tcero-jurisprudencia-aviso-versao.json"),
+    atual: L.VERSAO, versaoMaisNova: L.versaoMaisNova, consultar: () => consultarUltimaTag(),
+  })
     .then((tag) => {
       L.estadoVersao.versaoNovaCache = tag;
     })
