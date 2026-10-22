@@ -440,13 +440,13 @@ test("COMO_ATUALIZAR no aviso de versão e no rodapé de erro", () => {
   L.resetCreditoParaTeste();
 });
 
-test("versão 1.7.2 igual em manifest, package.json e lib; manifest lista todas as ferramentas registradas", async () => {
+test("versão 1.7.3 igual em manifest, package.json e lib; manifest lista todas as ferramentas registradas", async () => {
   const raiz = path.dirname(AQUI);
   const man = JSON.parse(fs.readFileSync(path.join(raiz, "manifest.json"), "utf-8"));
   const pkg = JSON.parse(fs.readFileSync(path.join(raiz, "package.json"), "utf-8"));
-  assert.equal(L.VERSAO, "1.7.2");
-  assert.equal(man.version, "1.7.2");
-  assert.equal(pkg.version, "1.7.2");
+  assert.equal(L.VERSAO, "1.7.3");
+  assert.equal(man.version, "1.7.3");
+  assert.equal(pkg.version, "1.7.3");
   const esperadas = ["buscar_jurisprudencia_tcero", "obter_acordao_tcero", "verificar_citacao_tcero", "diagnostico_ritmo_tcero", "buscar_recibos_tcero", "diagnostico_erros_tcero", "linha_do_tempo_tcero", "sugerir_termos_tcero", "atualizar_extensao_tcero", "julgados_que_citam_tcero"];
   assert.deepEqual(man.tools.map((t) => t.name).sort(), [...esperadas].sort());
   // o arquivo do fundo de vocabulário está ao lado do servidor (é ele que vai no .mcpb) e o .mcpbignore não o exclui

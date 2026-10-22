@@ -2,6 +2,10 @@
 
 O histórico anterior (1.2.0 a 1.5.3) está no fim do `README.md`.
 
+## 1.7.3
+
+O campo autor da extensão agora mostra @robertogrecia. Nenhuma ferramenta mudou.
+
 ## 1.7.2
 
 O subtítulo da extensão agora traz o crédito do autor e a descrição foi reescrita em parágrafos, em linguagem acessível a advogados. Nenhuma ferramenta mudou.
