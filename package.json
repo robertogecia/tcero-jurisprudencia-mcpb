@@ -1,6 +1,6 @@
 {
   "name": "tcero-jurisprudencia-mcp",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Busca de jurisprudência do TCE-RO (portal ePapyrus) como ferramentas MCP",
   "type": "module",
   "private": true,
@@ -10,7 +10,7 @@
     "url": "https://github.com/robertogecia/tcero-jurisprudencia-mcp"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --import ./test/_isolar.mjs --test test/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

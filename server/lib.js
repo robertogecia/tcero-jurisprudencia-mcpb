@@ -9,7 +9,7 @@
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
 import { norm1, negacaoEscopo, negacaoProxima, entreAspas, obiterAntesComPos } from "./atribuicao13.js";
-import { posicaoTcero, RE_PAGINA_TC, secoesDaEmenta } from "./posicao2.js";
+import { posicaoTcero, RE_PAGINA_TC, secoesDaEmenta, votosOutrosTc, palavrasDeNomeTc, segmentosTc, linhasConselheiroTc } from "./posicao2.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +31,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.7.4";
+export const VERSAO = "1.7.5";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
@@ -825,6 +825,260 @@ function paginaDoTrecho(texto, alvo, inicio, fragmentos) {
   return meio !== null ? paginaPdfTcero(texto, meio) : "";
 }
 
+// --------------------------------------------------------------------------- //
+// Red team 22/10/2026 (achado alto 1): julgamento por maioria × "voto condutor" //
+// --------------------------------------------------------------------------- //
+// Rodada 2 (variantes do revisor): "ACORDAM os Conselheiros" (sem "Senhores") e "ACORDAM os Excelentíssimos Senhores Conselheiros" também.
+const RE_ACORDAM_FECHO_TC = /ACORDAM\s+(?:os|as)\s+(?:[A-Za-zÀ-ÿ.]+\s+){0,3}?Conselheir/gi;
+// "vencido o Conselheiro", "vencido parcialmente o Conselheiro", "vencidos, em parte, os Conselheiros", "vencido o Relator".
+// Rodada 3: entre "vencido" e "Conselheiro/Relator" só advérbio de extensão — "vencido o prazo o Relator" não é voto vencido.
+// Rodada final (rechecagem da rodada 3):
+//  - o título entre o artigo e "Conselheiro" volta a ser opcional e livre dentro do rol de tratamentos ("o Excelentíssimo [Senhor]
+//    Conselheiro", "o Senhor Conselheiro") — só "eminente/nobre" reabria o falso "confere" quando a maioria vem só nos itens;
+//  - vírgula logo depois de "vencid" só antes de advérbio de extensão ("vencidos, em parte, os"): "uma vez vencido, o Relator seja
+//    informado" não é proclamação; "Conselheiro/Relator" com fronteira de palavra ("a Relatoria" não é o Relator);
+//  - contexto de proclamação: "vencido" logo depois de pontuação, início ou "por maioria" — "o prazo vencido o Conselheiro Relator",
+//    "débitos vencidos o Conselheiro", "parcelas vencidas a Conselheiros Fiscais" (adjetivo do substantivo anterior) não disparam.
+const TITULO_CONS_N1 =
+  "(?:(?:excelentissim[oa]s?|exm[oa]s?\\.?|senhor(?:a|es|as)?|sr[as]?\\.?|eminentes?|nobres?|ilustres?|dout[oa]s?|insignes?|dign[oa]s?) ){0,3}";
+const RE_VENCIDO_CONS_N1 = new RegExp(
+  "(?<=(?:^|[,;:.()\\-\u2013\u2014]|(?<![a-z0-9])por maioria(?: de votos)?) *)vencid[oa]s?" +
+    "(?:,? (?:parcialmente|em parte|integralmente|totalmente),?)? (?:(?:o|a|os|as) )?" + TITULO_CONS_N1 +
+    "(?:conselheir[oa]s?|relator[a]?|relatores)(?![a-z0-9])");
+/** O "vencido" em `i` abre uma proclamação de vencido (Conselheiro/Relator)? Sticky: o lookbehind vê o texto anterior. */
+function ehVencidoConsTc(jn, i) {
+  const re = new RegExp(RE_VENCIDO_CONS_N1.source, "y");
+  re.lastIndex = i;
+  return re.test(jn);
+}
+const RE_MAIORIA_N1 = new RegExp(`(?<![a-z0-9])por maioria(?![a-z0-9])|${RE_VENCIDO_CONS_N1.source}`);
+// Depois do "em:" (dentro dos itens) só vale o sinal estrito "vencido o Conselheiro/Relator". Rodada 3: o ramo "por maioria … vencid" saiu —
+// item de acórdão UNÂNIME de RPPS ("aprovação … por maioria absoluta do Conselho Deliberativo e o pagamento das parcelas vencidas") disparava.
+const RE_MAIORIA_ITEM_N1 = RE_VENCIDO_CONS_N1;
+const RE_VENCIDOS_N1 = /(?<![a-z0-9])vencid[oa]s?(?![a-z0-9])/g;
+// Rodada final: "divergindo do Relator", "acompanhando em parte o Relator" fecham o rol de vencidos — o Relator ali é quem VENCEU.
+const RE_CORTE_VENCIDOS_N1 =
+  /;|:|(?<![a-z0-9])(?:quanto|no tocante|em relacao|que|nos termos|por unanimidade|em consonancia|diverg[a-z]*|acompanh[a-z]*|seguind[oa]|conforme|contrari[a-z]*|ressalvad[a-z]*)(?![a-z0-9])/;
+// "Relator" vencido é o Relator no rol, não "do/ao/pelo Relator" (complemento de quem divergiu). "à Relatora" fica de fora da lista:
+// norm1 a confunde com o artigo de "vencida a Relatora".
+const RE_RELATOR_NO_ROL_N1 = /(?<![a-z0-9])(?<!(?:do|ao|pelo|pela|da|com o|com a|o voto do|o voto da) )relator[a]?(?![a-z0-9])/;
+// fim da janela dos itens do fecho: o próximo título do corpo (RELATÓRIO/VOTO/PROPOSTA) em linha própria
+const RE_FIM_ITENS_TC = /\n[ \t]*(?:RELAT[ÓO]RIO|VOTO|PROPOSTA DE DECIS[ÃA]O)\b/;
+
+/** Lê os vencidos de uma janela do fecho (bruto `j` e norm1 `jn`, 1:1). `estrito`: só "vencido" seguido de Conselheiro/Relator. */
+function lerVencidosTc(j, jn, out, literais, estrito) {
+  for (const v of jn.matchAll(RE_VENCIDOS_N1)) {
+    if (estrito && !ehVencidoConsTc(jn, v.index)) continue;
+    const ini = v.index + v[0].length;
+    let seg = jn.slice(ini, ini + 400);
+    const corte = seg.search(RE_CORTE_VENCIDOS_N1);
+    if (corte >= 0) seg = seg.slice(0, corte);
+    const lit = j.slice(v.index, ini + seg.length).replace(/[ \t\n\r\f\v]+/g, " ").trim().replace(/[,\s]+$/, "");
+    if (lit && !literais.includes(lit)) literais.push(lit);
+    const semParenteses = seg.replace(/\([^)]*\)?/g, " ");
+    if (RE_RELATOR_NO_ROL_N1.test(semParenteses)) out.relatorVencido = true;
+    // o nome vem depois de "Conselheiro(s)": o que está antes ("parcialmente o") não é nome
+    const iC = semParenteses.search(/(?<![a-z0-9])conselheir/);
+    const base = iC >= 0 ? semParenteses.slice(iC) : semParenteses;
+    for (const pedaco of base.split(/,|(?<![a-z0-9])e(?![a-z0-9])/)) {
+      const nome = palavrasDeNomeTc(pedaco);
+      if (nome.length >= (iC >= 0 ? 1 : 2)) out.vencidos.push(nome);
+    }
+  }
+}
+
+/** Os "ACORDAM" que são o fecho do PRÓPRIO acórdão. Rodada 3 (alarme falso da rodada 2): o acompanhamento de decisão transcreve, dentro do
+ * relatório ou do voto, o fecho de acórdão ANTERIOR ("ACORDAM … por maioria, vencido o Conselheiro X", 77649 l. 796) — e o julgamento
+ * unânime ganhava "JULGAMENTO POR MAIORIA" e o vogal X, que só convergiu, ganhava "VOTO VENCIDO". Regra: nunca o ACORDAM de dentro de um
+ * segmento de RELATÓRIO/voto; havendo o título ACÓRDÃO antes do corpo (PDF lido), só o 1º ACORDAM entre ele e o corpo (a ementa que
+ * cita precedente também fica de fora). Sem o título (formato fora do padrão), todos os de fora do corpo, como antes. */
+export function fechosPropriosTc(bruto) {
+  const todos = [...bruto.matchAll(RE_ACORDAM_FECHO_TC)];
+  if (!todos.length) return [];
+  const { marcas, segs } = segmentosTc(bruto);
+  const iniCorpo = segs.length ? Math.min(...segs.map((s) => s.a)) : bruto.length;
+  const fora = todos.filter((m) => !segs.some((s) => s.a <= m.index && m.index < s.b));
+  const tituloAcordao = marcas.find(([p, k]) => k === "acordao" && p < iniCorpo);
+  if (tituloAcordao) {
+    const proprio = fora.find((m) => m.index > tituloAcordao[0] && m.index < iniCorpo);
+    if (proprio) return [proprio];
+  }
+  return fora;
+}
+
+/** O fecho ("ACORDAM os [Senhores] Conselheiros … em:") declara julgamento por maioria? Quem ficou vencido?
+ * → { maioria, relatorVencido, vencidos: [[palavras do nome]], literal }. Lê só o fecho do próprio acórdão (`fechosPropriosTc`).
+ * Rodada 2: também lê os itens depois do "em:" (até o próximo título do corpo), mas ali só com o sinal estrito. */
+export function maioriaDoFecho(bruto) {
+  const out = { maioria: false, relatorVencido: false, vencidos: [], literal: "" };
+  if (!bruto) return out;
+  const literais = [];
+  for (const m of fechosPropriosTc(bruto)) {
+    const jan = bruto.slice(m.index, m.index + 1500);
+    const fimItens = jan.search(/\bem\s*:/);
+    const j = fimItens > 0 ? jan.slice(0, fimItens) : jan.slice(0, 800);
+    const jn = norm1(j);   // norm1 é 1:1: as posições valem no bruto
+    if (RE_MAIORIA_N1.test(jn)) {
+      out.maioria = true;
+      lerVencidosTc(j, jn, out, literais, false);
+    }
+    if (fimItens > 0) {
+      let itens = bruto.slice(m.index + fimItens, m.index + fimItens + 4000);
+      const fimI = itens.search(RE_FIM_ITENS_TC);
+      if (fimI > 0) itens = itens.slice(0, fimI);
+      const itn = norm1(itens);
+      if (RE_MAIORIA_ITEM_N1.test(itn)) {
+        out.maioria = true;
+        lerVencidosTc(itens, itn, out, literais, true);
+      }
+    }
+  }
+  out.literal = literais.join(" · ").slice(0, 300);
+  return out;
+}
+
+/** `a` é subsequência (em ordem, não necessariamente contígua) de `b`. */
+const subseqTc = (a, b) => { let i = 0; for (const w of b) if (i < a.length && w === a[i]) i++; return i === a.length; };
+/** Mesmo conselheiro? Rodada 2: aceita nome abreviado ou encurtado ("Gervásio H. Lacerda" × "GERVÁSIO HILÁRIO LACERDA", "GERVÁSIO LACERDA")
+ * — o mais curto, com 2+ palavras, é subsequência do mais longo; com 1 palavra só, tem de ser o último sobrenome do outro. */
+export function mesmoNomeTc(a, b) {
+  if (!a || !b || !a.length || !b.length) return false;
+  const [c, l] = a.length <= b.length ? [a, b] : [b, a];
+  if (c.length === 1) return c[0] === l[l.length - 1];
+  return subseqTc(c, l);
+}
+
+/** Alertas quando o fecho diz "por maioria". Rodada 2: o cruzamento é com os SEGMENTOS que a própria posição atribui a outro conselheiro
+ * (`votosOutrosTc`), não com qualquer linha que traga o nome.
+ *  - trecho num voto de outro conselheiro cujo dono é vencido nomeado no fecho → VOTO VENCIDO;
+ *  - trecho num voto de outro conselheiro, e há vencido no fecho sem voto separado reconhecido (ou fecho sem nome) → "confira";
+ *  - trecho no voto condutor, e há vencido sem voto separado, relator vencido ou fecho sem nome → "confira". */
+const MIN_TEXTO_VOTO_SEPARADO = 120;
+/** Nomes de conselheiros que aparecem como dono de voto ou título "CONSELHEIRO NOME" no texto (para saber se um nome do fecho é ambíguo). */
+function nomesDeConselheirosTc(bruto, outros) {
+  const lista = [...outros.map((s) => s.nome), ...linhasConselheiroTc(bruto).map(([, nome]) => palavrasDeNomeTc(nome))].filter((x) => x.length);
+  const vistos = new Set();
+  return lista.filter((x) => { const k = x.join(" "); if (vistos.has(k)) return false; vistos.add(k); return true; });
+}
+export function alertasMaioria(bruto, posicao, meio = null) {
+  const pn = norm1(posicao || "");
+  const condutor = pn.startsWith("fundamentacao do voto condutor") || pn.startsWith("dispositivo do voto");
+  const outro = pn.startsWith("voto de outro conselheiro");
+  if (!condutor && !outro) return [];
+  const f = maioriaDoFecho(bruto);
+  if (!f.maioria) return [];
+  const fechoTxt = f.literal ? ` («${f.literal}»)` : "";
+  const outros = votosOutrosTc(bruto);
+  // voto separado = segmento com texto próprio além do título (uma assinatura "CONSELHEIRO NOME" solta no fim não separa voto nenhum)
+  const comTexto = outros.filter((s) => bruto.slice(s.a, s.b).replace(/[ \t\n\r\f\v]+/g, " ").trim().length - s.titulo.length >= MIN_TEXTO_VOTO_SEPARADO);
+  const semVoto = f.vencidos.filter((v) => !comTexto.some((s) => mesmoNomeTc(v, s.nome)));
+  if (outro) {
+    const seg = meio !== null && meio !== undefined ? outros.find((s) => s.a <= meio && meio < s.b) : null;
+    const tit = /título: «([^»]*)»/.exec(posicao || "");
+    const titulo = seg ? seg.titulo : tit ? tit[1] : "?";
+    const nome = seg ? seg.nome : palavrasDeNomeTc(titulo);
+    // Rodada 3: nome do fecho que casa com MAIS DE UM conselheiro do texto ("vencido o Conselheiro Silva" × FRANCISCO CARVALHO DA SILVA e
+    // FRANCISCO JÚNIOR FERREIRA DA SILVA, no 98114) não decide o dono — sai o "confira", nunca a afirmação VOTO VENCIDO.
+    const nomesDoTexto = nomesDeConselheirosTc(bruto, outros);
+    const casa = f.vencidos.filter((v) => mesmoNomeTc(v, nome));
+    // ambíguo = o nome do vencido casa com dois nomes do texto que não são a mesma pessoa (grafia curta × longa do mesmo conselheiro não conta)
+    const ambiguo = casa.length > 0 && casa.every((v) => {
+      const c = nomesDoTexto.filter((x) => mesmoNomeTc(v, x));
+      return c.some((x, i) => c.some((y, k) => k > i && !mesmoNomeTc(x, y)));
+    });
+    if (casa.length && !ambiguo)
+      return [
+        `VOTO VENCIDO: o fecho registra julgamento por maioria${fechoTxt} e o trecho está no voto de «${titulo}», que ficou ` +
+          "vencido (ao menos em parte) — é a posição da minoria, não a do TCE-RO. Não cite como entendimento da Corte.",
+      ];
+    if (ambiguo)
+      return [
+        `JULGAMENTO POR MAIORIA: o fecho registra vencido(s)${fechoTxt}, mas o nome do vencido casa com mais de um conselheiro deste ` +
+          `acórdão — o trecho está no voto de «${titulo}», que pode ou não ser o vencido. Confira quem ficou vencido antes de citar.`,
+      ];
+    // Rodada 3: relator vencido — o voto que venceu é de outro conselheiro, e o rótulo "não é o voto condutor" pode estar trocado
+    if (f.relatorVencido)
+      return [
+        `RELATOR VENCIDO: o fecho registra julgamento por maioria com o RELATOR vencido${fechoTxt} — o trecho está no voto de «${titulo}», ` +
+          "que pode ser o voto VENCEDOR (o que o TCE-RO decidiu), apesar do rótulo \"não é o voto condutor\". Confira quem redigiu o " +
+          "acórdão e se este voto foi o acompanhado pela maioria antes de citar.",
+      ];
+    if (!f.vencidos.length || semVoto.length)
+      return [
+        `JULGAMENTO POR MAIORIA: o fecho registra vencido(s)${fechoTxt} e a ferramenta não casou o nome de cada vencido com um voto ` +
+          `separado — o trecho está no voto de «${titulo}», que pode ser o vencido (título em caixa mista, nome grafado de outro modo). ` +
+          "Confira quem é o dono deste voto e se ele ficou vencido antes de citar.",
+      ];
+    return [];
+  }
+  if (f.relatorVencido || !f.vencidos.length || semVoto.length)
+    return [
+      `JULGAMENTO POR MAIORIA: o fecho registra vencido(s)${fechoTxt}${f.relatorVencido ? ", entre eles o RELATOR" : ""} e a ferramenta ` +
+        "não conseguiu separar com segurança o voto de cada vencido no texto — confira se o trecho é mesmo do voto condutor, e não " +
+        "de voto vencido, antes de atribuí-lo ao TCE-RO.",
+    ];
+  return [];
+}
+
+// Red team 22/10/2026 (achado alto 2): `[...]` juntava fragmentos a dezenas de milhares de caracteres (ementa + voto vencido da p. 23)
+// e devolvia ✅. Rodada 2 (regressão do corte fixo de 500): o que denuncia a junção é a PARTE do julgado, não só a distância.
+//  - fragmentos em partes diferentes (ementa × fecho × relatório × voto condutor × voto de outro conselheiro) → 🟠, a qualquer distância;
+//  - mesma parte, vão até TETO_ELIPSE_MESMA_PARTE (≈ uma página do PDF do TCE-RO) → ✅; acima de DISTANCIA_MAX_FRAGMENTOS sai com nota;
+//  - mesma parte (ou parte desconhecida, recibo sem PDF) e vão acima do teto → 🟠.
+export const DISTANCIA_MAX_FRAGMENTOS = 500;
+export const TETO_ELIPSE_MESMA_PARTE = 3000;
+const TETO_INICIOS_ENCADEAMENTO = 300;
+const TETO_CADEIAS_JULGADAS = 6;
+
+/** Encadeamentos em ordem dos fragmentos em `alvo` (um por ocorrência do 1º fragmento), do menor vão máximo para o maior. */
+function cadeiasDeFragmentos(alvo, fragsNorm) {
+  const out = [];
+  let pos0 = 0;
+  for (let t = 0; t < TETO_INICIOS_ENCADEAMENTO; t++) {
+    const primeiro = acharPalavras(alvo, fragsNorm[0], pos0);
+    if (!primeiro) break;
+    const cadeia = [primeiro];
+    let ok = true;
+    for (const f of fragsNorm.slice(1)) {
+      const a = acharPalavras(alvo, f, cadeia[cadeia.length - 1].fim);
+      if (!a) { ok = false; break; }
+      cadeia.push(a);
+    }
+    if (!ok) break;   // se falta a partir desta ocorrência, falta também a partir das seguintes
+    let vao = 0;
+    for (let i = 1; i < cadeia.length; i++) vao = Math.max(vao, cadeia[i].inicio - cadeia[i - 1].fim);
+    out.push({ cadeia, vao });
+    pos0 = primeiro.inicio + 1;
+  }
+  return out.sort((x, y) => x.vao - y.vao);
+}
+
+/** Parte do julgado a partir do rótulo de POSIÇÃO; null = desconhecida (não serve de prova de junção entre partes). */
+export function parteDoJulgadoTc(posicao) {
+  const p = posicao || "";
+  const t = /^VOTO de outro conselheiro \(título: «([^»]*)»/.exec(p);
+  if (t) return `voto de outro conselheiro «${t[1]}»`;
+  if (p.startsWith("ementa do cadastro")) return "ementa do cadastro";
+  if (p.startsWith("ementa")) return "ementa";
+  if (p.startsWith("acórdão/fecho")) return "acórdão/fecho";
+  if (p.startsWith("certidão")) return "certidão";
+  if (p.startsWith("RELATÓRIO")) return "relatório";
+  if (p.startsWith("DISPOSITIVO do voto") || p.startsWith("fundamentação do voto condutor")) return "voto condutor";
+  // Rodada 3: a autuação volta a ser parte conhecida — as 3 linhas de folga agora param no próximo título (posicao2.js), e "autuação [...]
+  // ementa" passava ✅. O cabeçalho de página continua de fora: uma frase que atravessa a quebra de página é elipse legítima.
+  if (p.startsWith("cabeçalho da peça (autuação)")) return "autuação";
+  return null;
+}
+
+/** Juízo sobre uma junção por `[...]`: { ok, tipo: "partes" | "longe" | null, partes }. */
+function juizoElipseTc(vao, posicoes) {
+  const partes = posicoes.map(parteDoJulgadoTc);
+  const conhecidas = [...new Set(partes.filter(Boolean))];
+  if (conhecidas.length > 1) return { ok: false, tipo: "partes", partes };
+  if (vao > TETO_ELIPSE_MESMA_PARTE) return { ok: false, tipo: "longe", partes };
+  return { ok: true, tipo: null, partes };
+}
+
 export function verificarTrecho(textos, trecho) {
   const fragmentos = (trecho || "")
     .split(/\[\s*\.\.\.\s*\]|\[…\]|…/)
@@ -850,6 +1104,7 @@ export function verificarTrecho(textos, trecho) {
   }
   const faltandoPorTexto = {};
   let houveTexto = false;
+  let distante = null;
   for (const [nome, texto] of Object.entries(textos)) {
     const alvo = normalizarCasamento(texto);
     if (!alvo) continue;
@@ -868,9 +1123,49 @@ export function verificarTrecho(textos, trecho) {
         pos = fim = achado.fim;
       }
     }
+    let notaElipse = null;
+    if (!faltando.length && fragmentos.length > 1) {
+      // rodada 2: julga as cadeias da mais curta para a mais longa; vale a primeira que fica numa parte só e dentro do teto
+      const cadeias = cadeiasDeFragmentos(alvo, fragmentos.map((x) => normalizarCasamento(x)));
+      let boa = null, primeiraRuim = null;
+      for (const c of cadeias.slice(0, TETO_CADEIAS_JULGADAS)) {
+        const posicoes = fragmentos.map((fr, i) => posicaoTceroTrecho(texto, alvo, c.cadeia[i].inicio, [fr]));
+        const juizo = juizoElipseTc(c.vao, posicoes);
+        if (juizo.ok) { boa = { c, juizo }; break; }
+        if (!primeiraRuim) primeiraRuim = { c, juizo, posicoes };
+      }
+      if (!boa && primeiraRuim) {
+        // nenhum ✅: cada fragmento existe, mas a junção atravessa partes do julgado (ou fica longe demais dentro de uma parte)
+        const { c, juizo, posicoes } = primeiraRuim;
+        if (!distante || (distante.tipo !== "partes" && juizo.tipo === "partes") || (distante.tipo === juizo.tipo && c.vao < distante.vao)) {
+          distante = {
+            vao: c.vao,
+            tipo: juizo.tipo,
+            partes: juizo.partes,
+            onde: nome,
+            porFragmento: fragmentos.map((fr, i) => {
+              const ini = c.cadeia[i].inicio;
+              return { fragmento: fr, posicao: posicoes[i], pagina: paginaDoTrecho(texto, alvo, ini, [fr]) };
+            }),
+          };
+        }
+        continue;
+      }
+      if (boa) {
+        inicio = boa.c.cadeia[0].inicio; fim = boa.c.cadeia[boa.c.cadeia.length - 1].fim;
+        if (boa.c.vao > DISTANCIA_MAX_FRAGMENTOS) {
+          const parte = boa.juizo.partes.find(Boolean);
+          notaElipse =
+            (parte ? `ELIPSE LONGA: os fragmentos estão na mesma parte do julgado (${parte}), mas o [...] omite ~${boa.c.vao} `
+              : `ELIPSE LONGA: a ferramenta não localizou a parte do julgado de cada fragmento, e o [...] omite ~${boa.c.vao} `) +
+            "caracteres (um ou mais parágrafos/itens) — confira se o trecho omitido não muda o sentido da junção.";
+        }
+      }
+    }
     if (!faltando.length) {
       const alertas = alertasAtribuicao(alvo, inicio, fim, texto, fragmentos);
       const posicao = posicaoTceroTrecho(texto, alvo, inicio, fragmentos);
+      alertas.push(...alertasMaioria(texto, posicao, meioDoTrecho(texto, alvo, inicio, fragmentos)));
       const pagina = paginaDoTrecho(texto, alvo, inicio, fragmentos);
       const voz = alertaVozDaCasa(nome, posicao, pagina);
       return {
@@ -882,12 +1177,32 @@ export function verificarTrecho(textos, trecho) {
         // `alertas` só tem o que PEDE cautela (contrato da v1.6.0: [] = nada a avisar); VOZ DA CASA é o contrário, vai em `notas`
         alertas,
         // VOZ DA CASA cala quando há QUALQUER alerta de atribuição (parecer do MPC, alegação, transcrição…): as duas notas se contradiriam
-        notas: voz && !alertas.length ? [voz] : [],
+        notas: [...(voz && !alertas.length ? [voz] : []), ...(notaElipse ? [notaElipse] : [])],
         posicao,
         pagina,
       };
     }
     faltandoPorTexto[nome] = faltando;
+  }
+  if (distante) {
+    const partesTxt = [...new Set(distante.partes.filter(Boolean))].join(" × ");
+    return {
+      valido: false,
+      distante: true,
+      tipo: distante.tipo,
+      onde: distante.onde,
+      faltando: [],
+      sem_texto: false,
+      alertas: [],
+      fragmentos: distante.porFragmento,
+      motivo:
+        (distante.tipo === "partes"
+          ? `os fragmentos separados por [...] existem em ${distante.onde}, mas em PARTES DIFERENTES do julgado (${partesTxt}; vão de ` +
+            `~${distante.vao} caracteres)`
+          : `os fragmentos separados por [...] existem em ${distante.onde}, mas longe um do outro (vão de ~${distante.vao} caracteres; ` +
+            `acima de ${TETO_ELIPSE_MESMA_PARTE}, cerca de uma página do PDF, a junção deixa de ser uma elipse dentro da mesma passagem)`) +
+        " — a junção NÃO é frase do acórdão: cite cada fragmento em separado, dizendo de onde vem, depois de conferir a posição de cada um abaixo",
+    };
   }
   if (!houveTexto) {
     return {
@@ -995,7 +1310,9 @@ export const RE_ALEGACAO_RAW =
   /\b(alega\w*|alegou|aduz\w*|sustent(?:a|am|ou|aram|ando)|argument(?:a|am|ou|aram|ando)|defende|defendem|defendeu|defendente|a defesa|em suas raz[õo]es|em sede de justificativas?)\b/gi;
 export const RE_PARECER_MPC_RAW =
   /\b(Minist[ée]rio P[úu]blico de Contas|MPC|Procurador\w*|parecer|corpo t[ée]cnico|unidade t[ée]cnica|Secretaria[- ]Geral de Controle Externo|SGCE|relat[óo]rio t[ée]cnico|opinou|manifestou-?se)\b/gi;
-export const RE_DIVERGENCIA_RAW = /pe[çc]o v[êe]nia para divergir|voto vencido|voto-vista|divirjo do/gi;
+// Red team 22/10/2026: "Peço vênia ao relator para divergir", "com ressalva de entendimento" e "Reformulo meu voto" (98114) passavam em branco.
+export const RE_DIVERGENCIA_RAW =
+  /pe[çc]o v[êe]nia(?: (?:ao|à|a) (?:(?:eminente|e\.|douto|nobre) )?(?:relator[a]?|conselheir[oa] relator[a]?))? para divergir|ressalva de entendimento|reformulo (?:o )?meu voto|voto vencido|voto-vista|divirjo do/gi;
 export const JANELA_EXCERTO_RAW = 320;
 const TETO_EXCERTOS_POR_CAMPO = 40;
 
@@ -1665,7 +1982,7 @@ export function falhaTransitoria(codigoOuNome) {
 
 export function linhasVerificacaoItem(s, trecho, textos) {
   const r = verificarTrecho(textos, trecho);
-  const marca = r.valido ? "✅ VÁLIDO" : r.sem_texto ? "⚠️ NÃO VERIFICÁVEL" : "❌ NÃO ENCONTRADO";
+  const marca = r.valido ? "✅ VÁLIDO" : r.distante ? (r.tipo === "partes" ? "🟠 CONFIRA (fragmentos em partes diferentes)" : "🟠 CONFIRA (fragmentos distantes)") : r.sem_texto ? "⚠️ NÃO VERIFICÁVEL" : "❌ NÃO ENCONTRADO";
   const linhas = [`${marca} · id ${s.idDecisao} · ${s.sigla || "?"} ${s.numero || "?"} · ${r.motivo}`];
   if (r.valido && r.alertas && r.alertas.length) {
     for (const a of r.alertas) {
@@ -1674,6 +1991,11 @@ export function linhasVerificacaoItem(s, trecho, textos) {
   }
   if (r.valido) for (const nota of r.notas || []) linhas.push(`   ℹ ${nota}`); // v1.7.0: VOZ DA CASA
   if (r.valido && r.posicao) linhas.push(`   ℹ POSIÇÃO NO JULGADO: ${r.posicao}${r.pagina ? ` (${r.pagina})` : ""}.`);
+  if (r.distante) {
+    (r.fragmentos || []).forEach((x, i) => {
+      linhas.push(`   fragmento ${i + 1}: «${umaLinha(x.fragmento).slice(0, 160)}» → ${x.posicao || "posição não identificada"}${x.pagina ? ` (${x.pagina})` : ""}`);
+    });
+  }
   if (!r.valido && r.faltando && r.faltando.length) {
     for (const f of r.faltando.slice(0, 3)) {
       linhas.push(`   fragmento sem correspondência: «${umaLinha(f).slice(0, 160)}»`);

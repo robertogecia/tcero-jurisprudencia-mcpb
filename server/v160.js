@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as L from "./lib.js";
 import { norm1, inicioDaFrase, RE_OBITER, OBITER_JANELA } from "./atribuicao13.js";
-import { posicaoTcero, RE_CAB_TC, RE_PAGINA_TC } from "./posicao2.js";
+import { posicaoTcero, RE_CAB_TC, RE_PAGINA_TC, linhasConselheiroTc } from "./posicao2.js";
 
 const RE_ESPACOS_PY = /[ \t\n\r\f\v]+/g;
 const colapsa = (t) => String(t).replace(RE_ESPACOS_PY, " ");
@@ -940,9 +940,19 @@ export function estruturaPdfTcero(bruto) {
       if (pos.startsWith("VOTO de outro conselheiro")) rotulo = "VOTO de outro conselheiro";
     }
     const titulo = colapsa(bruto.slice(m.index, m.index + m[0].length)).trim().slice(0, 80);
-    out.push([rotulo, L.paginaPdfTcero(bruto, m.index), titulo]);
+    out.push([rotulo, L.paginaPdfTcero(bruto, m.index), titulo, m.index]);
   }
-  return out;
+  // red team 22/10/2026: voto de vogal/vencido com título só "CONSELHEIRO NOME" (sem VOTO) — entra se a posição o trata como voto de outro
+  for (const [p, , continua] of linhasConselheiroTc(bruto)) {
+    // rodada 2: a 2ª linha de um título "VOTO\nCONSELHEIRO NOME" já entrou pelo próprio título VOTO — não lista em dobro
+    if (continua || out.some((x) => x[3] === p)) continue;
+    const fimLinha = bruto.indexOf("\n", p);
+    const meio = Math.min(bruto.length - 1, (fimLinha >= 0 ? fimLinha : bruto.length) + 1);
+    if (!posicaoTcero(bruto, meio).startsWith("VOTO de outro conselheiro")) continue;
+    const titulo = colapsa(bruto.slice(p, fimLinha >= 0 ? fimLinha : bruto.length)).trim().slice(0, 80);
+    out.push(["VOTO de outro conselheiro", L.paginaPdfTcero(bruto, p), titulo, p]);
+  }
+  return out.sort((a, b) => a[3] - b[3]).map(([r, pg, t]) => [r, pg, t]);
 }
 
 /** [texto do fecho, quantos "ACORDAM os Senhores Conselheiros" há no texto]. */

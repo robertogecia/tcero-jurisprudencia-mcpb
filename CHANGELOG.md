@@ -2,6 +2,14 @@
 
 O histórico anterior (1.2.0 a 1.5.3) está no fim do `README.md`.
 
+## 1.7.5
+
+Correções de conferência de citação, encontradas numa revisão adversarial.
+
+- Quando o acórdão foi julgado por maioria, o trecho do voto vencido de um conselheiro deixou de ser apresentado como voto condutor. A ferramenta avisa que o julgamento foi por maioria, diz quem ficou vencido e marca com alerta a frase que vem do voto vencido, para que ela não seja citada como fundamento do Tribunal.
+- Citação com reticências [...] que emenda um trecho da ementa a um trecho distante do voto vencido agora é recusada: a frase montada não existe no acórdão e daria a entender que o Tribunal disse o que só o vencido disse.
+- Os testes automáticos passaram a rodar numa pasta temporária isolada, sem ler nem gravar nada na pasta da extensão no seu computador. Nenhuma pesquisa muda por isso.
+
 ## 1.7.4
 
 A checagem de versão nova agora acontece no máximo uma vez por semana: a extensão registra a data da última checagem no seu computador e, nas outras sessões, só lembra da versão já vista. Nada da pesquisa sai do computador.

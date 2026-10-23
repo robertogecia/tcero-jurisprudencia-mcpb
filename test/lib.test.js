@@ -3,6 +3,7 @@
 // Casos que dependem de PyMuPDF/fitz para GERAR um PDF sintético não têm equivalente direto
 // aqui (pdfjs-dist só LÊ PDF, não escreve) — nesses pontos o teste usa um PDF real das fixtures
 // em vez de um sintético; ver o README para o que ficou de fora.
+import "./_isolar.mjs"; // 1º import: tira a suíte da pasta real ~/.tcero-jurisprudencia (red team 22/10/2026, rodada 3)
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs from "node:fs";
@@ -378,9 +379,11 @@ test("recibo — sha256 do texto e sha256_campos são estáveis e detectam adult
 
 test("gravarReciboTcero + lerReciboTcero — round-trip e rejeição de recibo adulterado", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tcero-recibo-"));
+  const antes = process.env.TCERO_MCP_DIR_RECIBOS;
   process.env.TCERO_MCP_DIR_RECIBOS = dir;
   t.after(() => {
-    delete process.env.TCERO_MCP_DIR_RECIBOS;
+    // devolve o valor isolado de _isolar.mjs (apagar a variável faria um import posterior cair em ~/.tcero-jurisprudencia-recibos)
+    if (antes === undefined) delete process.env.TCERO_MCP_DIR_RECIBOS; else process.env.TCERO_MCP_DIR_RECIBOS = antes;
     fs.rmSync(dir, { recursive: true, force: true });
   });
   // Recarrega o módulo para pegar DIR_RECIBOS já com o env var — como DIR_RECIBOS é lido no

@@ -1,6 +1,6 @@
 // POSIÇÃO NO JULGADO (06/10/2026) para TRT14, TCE-RO, TED-OAB/SP e TNU — espelho de _posicao_generica + _posicao_trt14 /
 // _posicao_tcero / _posicao_ted / _posicao_tnu dos servidores Python. Arquivo IDÊNTICO nas quatro extensões (como atribuicao13.js);
-// a fonte é a do TRT14 (exceção v1.6.0, 15/10/2026: só o ramo TCE-RO muda aqui — título do voto de outro conselheiro e export de RE_CAB_TC/RE_PAGINA_TC; os demais ramos seguem idênticos). Localizador, não juiz: diz onde a frase está; ratio × dictum continua sendo de quem lê.
+// a fonte é a do TRT14 (exceção v1.6.0, 15/10/2026: só o ramo TCE-RO muda aqui — título do voto de outro conselheiro e export de RE_CAB_TC/RE_PAGINA_TC; red team 22/10/2026: voto de vogal com título só "CONSELHEIRO NOME" e, na rodada 2, segmentosTc/votosOutrosTc e título em duas linhas; os demais ramos seguem idênticos). Localizador, não juiz: diz onde a frase está; ratio × dictum continua sendo de quem lê.
 // Regex sem a flag `u` (\b e \d ASCII, como o re.ASCII do Python). O `^`/`$` multilinha do Python só olha "\n"; o do JS também
 // para em "\r" — por isso as âncoras de linha vão explícitas (INI / FIM).
 import { norm1 } from "./atribuicao13.js";
@@ -133,8 +133,105 @@ const RE_AUTUACAO_TC = new RegExp(`${INI}[ \\t]*(?:PROCESSO|ASSUNTO|JURISDICIONA
   + `|REPRESENTAD|ORIGEM|NATUREZA)\\b[^\\n]*${FIM}`, "g");
 export const RE_PAGINA_TC = /TRIBUNAL DE CONTAS DO ESTADO DE ROND[ÔO]NIA[ \t]*\n(?:[^\n]*\n){0,9}?[^\n]*(?:Proc\.?[ \t]*:[^\n]*|\d+[ \t]+de[ \t]+\d+[ \t]*)\n|TRIBUNAL DE CONTAS DO ESTADO DE ROND[ÔO]NIA[ \t]*\n[^\n]*\n?[ \t]*D[^\n]{0,6}-SPJ[^\n]*\n(?:[^\n]*Ac[óo]rd[ãa]o[^\n]*\n)?/g;
 const RE_RESULTADO_TC = /(?<![a-z0-9])(?:convergindo|acolh\w*|submeto|proponho|propoe-se|decido|voto (?:no sentido|pelo|por)|e como voto|considerar (?:legal|ilegal|regular|irregular|cumprid)|julgar (?:regular|irregular|legal|ilegal)|determinar)/;
-const NAO_NOME_TC = new Set(["conselheiro", "conselheira", "substituto", "substituta", "relator", "relatora", "vista", "voto", "retificado", "proposta", "decisao", "de", "da", "do", "dos", "das"]);
+// rodada 3: plurais também ("vencidos os Conselheiros X e Y" punha "conselheiros" dentro do nome de X)
+const NAO_NOME_TC = new Set(["conselheiro", "conselheira", "conselheiros", "conselheiras", "substituto", "substituta", "substitutos", "substitutas",
+  "relator", "relatora", "relatores", "vista", "voto", "retificado", "proposta", "decisao", "de", "da", "do", "dos", "das"]);
 const sobrenTc = (x) => (norm1(x).match(/[a-z]{3,}/g) || []).filter((w) => !NAO_NOME_TC.has(w));
+
+// Red team 22/10/2026 (achado alto 1): voto de vogal com título só "CONSELHEIRO [SUBSTITUTO] NOME", sem a palavra VOTO (98114: o voto
+// vencido do Cons. Substituto Omar Pires Dias). Linha inteira em CAIXA ALTA; o parêntese no fim ("(substituição em vacância)",
+// "(em substituição regimental ao") fica fora do nome.
+const RE_CAB_CONSELHEIRO_TC = new RegExp(`${INI}[ \\t]*CONSELHEIR[OA](?:[ \\t]*-[ \\t]*SUBSTITUT[OA]|[ \\t]+SUBSTITUT[OA])?[ \\t]+`
+  + `([A-ZÀ-Ý][A-ZÀ-Ý'.]*(?:[ \\t]+[A-ZÀ-Ý][A-ZÀ-Ý'.]*){1,8})[ \\t]*(?:\\([^\\n]*)?${FIM}`, "g");
+const RE_LINHA_TITULO_VOTO_TC = /^[ \t]*(?:VOTO|PROPOSTA DE DECIS[ÃA]O)\b[^\n]{0,40}$/;
+
+/** Linhas "CONSELHEIRO [SUBSTITUTO] NOME" (caixa alta, linha inteira) → [[posição, nome, continuaTitulo]]. `continuaTitulo` = a linha
+ * anterior (não vazia) é um título VOTO/PROPOSTA — é a segunda linha do título do mesmo voto ("VOTO\nCONSELHEIRO FULANO"). */
+export function linhasConselheiroTc(bruto) {
+  const out = [];
+  for (const m of bruto.matchAll(RE_CAB_CONSELHEIRO_TC)) {
+    if (sobrenTc(m[1]).length < 2) continue;
+    let k = m.index - 1;
+    while (k >= 0 && /\s/.test(bruto[k])) k--;
+    const iniAnt = bruto.lastIndexOf("\n", k) + 1;
+    const anterior = k >= 0 ? bruto.slice(iniAnt, k + 1) : "";
+    out.push([m.index, m[1].replace(/[ \t]+/g, " ").trim(), RE_LINHA_TITULO_VOTO_TC.test(anterior)]);
+  }
+  return out;
+}
+
+/** Nome (só palavras de nome, ≥3 letras, normalizadas) como sequência — para cruzar com os vencidos do fecho. */
+export function palavrasDeNomeTc(x) {
+  return sobrenTc(String(x || "").replace(/\([^)]*\)?/g, " "));
+}
+
+// Red team 22/10/2026, rodada 2: qualificadores do título do voto que NÃO são nome ("VOTO DIVERGENTE", "VOTO VENCIDO"). Antes contavam como
+// "nome" e era isso que fazia o voto divergente sem nome cair em "outro"; o sinal agora é explícito (QUALIF_OUTRO_TC).
+const QUALIF_TITULO_TC = new Set(["divergente", "vencido", "vencida", "convergente", "vencedor", "vencedora", "parcialmente", "separado", "em"]);
+const RE_QUALIF_OUTRO_TC = /(?<![a-z0-9])(?:divergente|vencid[oa]|convergente|vencedora?)(?![a-z0-9])/;
+
+/** Segmentos do corpo (RELATÓRIO e votos) → { marcas, segs: [{a, b, dono, titulo, nome}], relator }. Fonte ÚNICA de quem é dono de cada
+ * voto — `posicaoTcero` rotula por ela e `alertasMaioria` (lib.js) cruza o fecho com ela (red team 22/10/2026, rodada 2: o alerta de voto
+ * vencido tem de depender do segmento que a própria posição atribuiu ao vencido, não de existir uma linha com o nome dele).
+ * Título em duas linhas ("VOTO" / "VOTO-VISTA" / "VOTO DIVERGENTE" e, na linha seguinte, "CONSELHEIRO [SUBSTITUTO] NOME"): o nome da
+ * segunda linha decide o dono — antes o voto do vencido logo depois do relator herdava o dono anterior (o relator). */
+export function segmentosTc(bruto) {
+  const n = bruto.length;
+  const marcas = [];
+  for (const m of bruto.matchAll(RE_CAB_TC)) {
+    const k = norm1(m[1]), resto = stripPy(norm1(m[2] || ""), " :.-–");
+    if (k === "dispositivo" && resto.startsWith("e tese")) continue;
+    if (["acordao", "relatorio", "dispositivo", "ementa"].includes(k) && resto.length > 25) continue;
+    marcas.push([m.index, k, resto]);
+  }
+  const linhasCons = linhasConselheiroTc(bruto);
+  {  // red team 22/10/2026: depois do 1º voto, "CONSELHEIRO NOME" sozinho na linha abre o voto de outro conselheiro (vogal, vencido)
+    const iniVotos = marcas.find(([, k]) => k === "voto" || k === "proposta de decisao");
+    if (iniVotos) {
+      let novos = 0;
+      for (const [p, nome, continua] of linhasCons) {
+        if (p <= iniVotos[0] || continua || marcas.some(([q]) => q === p)) continue;
+        marcas.push([p, "voto", stripPy(norm1(nome), " :.-–")]); novos++;
+      }
+      if (novos) marcas.sort((a, b) => a[0] - b[0]);
+    }
+  }
+  const mRel = /RELATOR[A]?[ \t]*:?[ \t]*\n?[ \t]*([^\n]{3,90})/.exec(bruto);
+  const relator = mRel ? sobrenTc(mRel[1]) : [];
+  const fimLinha = (p) => { const k = bruto.indexOf("\n", p); return k >= 0 ? k : n; };
+  const tituloVoto = (p) => bruto.slice(p, fimLinha(p)).replace(/[ \t\n\r\f\v]+/g, " ").trim().slice(0, 80);
+  // a 2ª linha do título: linha "CONSELHEIRO NOME" marcada como continuação, logo depois da linha deste título
+  const segundaLinha = (p) => {
+    let q = fimLinha(p);
+    while (q < n && /\s/.test(bruto[q])) q++;
+    return linhasCons.find(([x, , continua]) => continua && x === q) || null;
+  };
+  const segs = []; let donoAnt = null;
+  const corpo = marcas.filter(([, k]) => ["relatorio", "voto", "proposta de decisao", "fundamentacao", "fundamentos"].includes(k));
+  corpo.forEach(([p, k, r], i) => {
+    const f = i + 1 < corpo.length ? corpo[i + 1][0] : n;
+    if (k === "relatorio") { segs.push({ a: p, b: f, dono: "relatorio", titulo: tituloVoto(p), nome: [] }); donoAnt = "relator"; return; }
+    let nomes = sobrenTc(r).filter((w) => !QUALIF_TITULO_TC.has(w));
+    let titulo = tituloVoto(p);
+    const l2 = !nomes.length && (k === "voto" || k === "proposta de decisao") ? segundaLinha(p) : null;
+    if (l2 && relator.length) {   // sem relator lido do cabeçalho, o nome da 2ª linha não decide nada (mantém o comportamento antigo)
+      nomes = sobrenTc(l2[1]);
+      titulo = `${titulo} ${tituloVoto(l2[0])}`.slice(0, 120);
+    }
+    let dono;
+    if (nomes.length) dono = relator.length && (relator.includes(nomes[nomes.length - 1]) || nomes.includes(relator[relator.length - 1])) ? "relator" : "outro";
+    else if (RE_QUALIF_OUTRO_TC.test(r)) dono = "outro";   // "VOTO DIVERGENTE"/"VOTO VENCIDO" sem nome: nunca do condutor
+    else dono = donoAnt || "relator";
+    segs.push({ a: p, b: f, dono, titulo, nome: nomes.length ? palavrasDeNomeTc(l2 ? l2[1] : r) : [] });
+    donoAnt = dono;
+  });
+  return { marcas, segs, relator };
+}
+
+/** Votos que a posição atribui a OUTRO conselheiro (não o condutor) → [{a, b, titulo, nome: [palavras do nome]}]. */
+export function votosOutrosTc(bruto) {
+  return segmentosTc(bruto).segs.filter((s) => s.dono === "outro").map(({ a, b, titulo, nome }) => ({ a, b, titulo, nome }));
+}
 
 /** _posicao_tcero: autuação → ementa → ACÓRDÃO → autuação repetida → RELATÓRIO → VOTO/PROPOSTA DE DECISÃO → DISPOSITIVO; votos
  * de outros conselheiros pelo nome no título; o recibo começa pela ementa do cadastro. */
@@ -148,13 +245,7 @@ export function posicaoTcero(bruto, meio) {
       if (m[0].length === 0) re.lastIndex++;
     }
   }
-  const marcas = [];
-  for (const m of bruto.matchAll(RE_CAB_TC)) {
-    const k = norm1(m[1]), resto = stripPy(norm1(m[2] || ""), " :.-–");
-    if (k === "dispositivo" && resto.startsWith("e tese")) continue;
-    if (["acordao", "relatorio", "dispositivo", "ementa"].includes(k) && resto.length > 25) continue;
-    marcas.push([m.index, k, resto]);
-  }
+  const { marcas, segs: segs0 } = segmentosTc(bruto);
   let blocos = [];
   for (const m of bruto.matchAll(RE_AUTUACAO_TC)) {
     const fimM = m.index + m[0].length;
@@ -162,28 +253,20 @@ export function posicaoTcero(bruto, meio) {
     else blocos.push([m.index, fimM, 1]);
   }
   const tresLinhas = (p) => { for (let i = 0; i < 3; i++) { const k = bruto.indexOf("\n", p + 1); if (k < 0) return n; p = k; } return p; };
-  blocos = blocos.filter((b) => b[2] >= 3).map(([a, b]) => [a, tresLinhas(b)]);
+  // Red team 22/10/2026, rodada 3: as 3 linhas de folga param no próximo título (RELATÓRIO, EMENTA, VOTO…). Antes a 1ª linha do RELATÓRIO
+  // logo depois da autuação repetida (96141: "1. Trata-se de apreciação…") saía como autuação, e a junção relatório [...] voto passava ✅.
+  // (todo título em linha própria conta aqui, inclusive "EMENTA: CONSTITUCIONAL. …", que não vira marca por ter texto longo depois)
+  const titulos = [...bruto.matchAll(RE_CAB_TC)].map((m) => m.index);
+  const proxTitulo = (p) => { for (const q of titulos) if (q > p) return q; return n; };
+  blocos = blocos.filter((b) => b[2] >= 3).map(([a, b]) => [a, Math.max(b, Math.min(tresLinhas(b), proxTitulo(b)))]);
   const pos = (k, depois = 0) => { for (const [p, kk] of marcas) if (kk === k && p >= depois) return p; return -1; };
   const acordao = pos("acordao");
-  const mRel = /RELATOR[A]?[ \t]*:?[ \t]*\n?[ \t]*([^\n]{3,90})/.exec(bruto);
-  const relator = mRel ? sobrenTc(mRel[1]) : [];
-  const segs = []; let donoAnt = null;
-  const corpo = marcas.filter(([, k]) => ["relatorio", "voto", "proposta de decisao", "fundamentacao", "fundamentos"].includes(k));
-  corpo.forEach(([p, k, r], i) => {
-    const f = i + 1 < corpo.length ? corpo[i + 1][0] : n;
-    if (k === "relatorio") { segs.push([p, f, "relatorio"]); donoAnt = "relator"; return; }
-    const nomes = sobrenTc(r);
-    let dono;
-    if (nomes.length) dono = relator.length && (relator.includes(nomes[nomes.length - 1]) || nomes.includes(relator[relator.length - 1])) ? "relator" : "outro";
-    else dono = donoAnt || "relator";
-    segs.push([p, f, dono]); donoAnt = dono;
-  });
+  const segs = segs0.map(({ a, b, dono }) => [a, b, dono]);
   const relSeg = (segs.find(([a, b, d]) => d === "relatorio" && a <= meio && meio < b) || segs.find(([, , d]) => d === "relatorio") || null);
   const rs = relSeg ? [relSeg[0], relSeg[1]] : null;
   const votos = segs.filter(([, , d]) => d === "relator").map(([a, b]) => [a, b]);
-  // v1.6.0: o título do voto (linha do cabeçalho) diz de QUEM é e onde ele começa
-  const tituloVoto = (p) => { const k = bruto.indexOf("\n", p); return bruto.slice(p, k >= 0 ? k : n).replace(/[ \t\n\r\f\v]+/g, " ").trim().slice(0, 80); };
-  const outros = segs.filter(([, , d]) => d === "outro").map(([a, b]) => [a, b, `VOTO de outro conselheiro (título: «${tituloVoto(a)}»)`]);
+  // v1.6.0: o título do voto (linha do cabeçalho) diz de QUEM é e onde ele começa (rodada 2: com a 2ª linha do título, quando o nome está nela)
+  const outros = segs0.filter((x) => x.dono === "outro").map(({ a, b, titulo }) => [a, b, `VOTO de outro conselheiro (título: «${titulo}»)`]);
   const rel = rs ? rs[0] : -1;
   const voto = votos.length ? votos[0][0] : -1;
   const tnAll = norm1(bruto);

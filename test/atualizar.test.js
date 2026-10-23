@@ -1,3 +1,4 @@
+import "./_isolar.mjs"; // 1º import: tira a suíte da pasta real ~/.tcero-jurisprudencia (red team 22/10/2026, rodada 3)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
