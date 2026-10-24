@@ -9,7 +9,7 @@
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
 import { norm1, negacaoEscopo, negacaoProxima, entreAspas, obiterAntesComPos } from "./atribuicao13.js";
-import { posicaoTcero, RE_PAGINA_TC, secoesDaEmenta, votosOutrosTc, palavrasDeNomeTc, segmentosTc, linhasConselheiroTc } from "./posicao2.js";
+import { posicaoTcero, posicaoGenerica, RE_PAGINA_TC, secoesDaEmenta, votosOutrosTc, palavrasDeNomeTc, segmentosTc, linhasConselheiroTc } from "./posicao2.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +31,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.7.5";
+export const VERSAO = "1.7.6";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
@@ -163,13 +163,43 @@ export function texto(v) {
   return String(v).trim();
 }
 
-const RE_NUMERO_ACORDAO_PROCESSO = /^\d+\/\d+$/;
+// Pendências do red team 22/10/2026 (achado médio): "55/2026" virava "055/2026" (padStart de 8), "APL-TC 00055/26", "0000055/26" e "55 / 26"
+// iam crus ao portal, e o resultado vazio saía como "Nenhuma decisão … não cite". Uma normalização só, para buscar, obter, verificar e
+// julgados_que_citam: prefixo "Acórdão"/"Processo" e sigla (APL-TC, AC1-TC, AC2-TC e as de recurso …R-TC) saem (a sigla fica guardada),
+// espaço em volta da barra é aceito, ano de 4 dígitos (19xx/20xx) vira 2, zeros à esquerda excedentes caem e o número volta a 5 dígitos.
+// Só dígitos ASCII. O que não couber em NNNNN/AA é recusado com mensagem de FORMATO — nunca com "não há decisão".
+const RE_PREFIXO_NUMERO_TC = /^(?:(ac[óo]rd[ãa]o|ac\.)|(processo|proc\.?))[ \t]*(?:n[º°o.]*[ \t]*)?/i;
+const RE_SIGLA_NUMERO_TC = /^((?:APL|AC[12])R?)[ \t]*-?[ \t]*TC\b[ \t]*(?:n[º°o.]*[ \t]*)?/i;
+const RE_CORE_NUMERO_TC = /^0*([0-9]{1,5})[ \t]*\/[ \t]*((?:19|20)[0-9]{2}|[0-9]{2})$/;
 
+/** { valido, forma: "NNNNN/AA", n: dígitos sem zeros à esquerda, aa, sigla: "APL-TC" | null, tipo: "acordao" | "processo" | null, original }. */
+export function normalizarNumeroTc(v) {
+  const original = texto(v);
+  let t = original.replace(/\s+/g, " ");
+  let tipo = null;
+  let sigla = null;
+  const mp = RE_PREFIXO_NUMERO_TC.exec(t);
+  if (mp) { tipo = mp[1] ? "acordao" : "processo"; t = t.slice(mp[0].length); }
+  const ms = RE_SIGLA_NUMERO_TC.exec(t);
+  if (ms && tipo !== "processo") { sigla = `${ms[1].toUpperCase()}-TC`; tipo = "acordao"; t = t.slice(ms[0].length); }
+  const m = RE_CORE_NUMERO_TC.exec(t.trim());
+  if (!m) return { valido: false, forma: null, n: null, aa: null, sigla, tipo, original };
+  const n = m[1].replace(/^0+/, "") || "0";
+  const aa = m[2].slice(-2);
+  return { valido: true, forma: `${n.padStart(5, "0")}/${aa}`, n, aa, sigla, tipo, original };
+}
+
+export function mensagemFormatoNumeroTc(v, campo = "número") {
+  return (
+    `${campo} ${pyRepr(texto(v))} em formato não reconhecido — use NNNNN/AA (ex.: "00055/26", "55/26", "55/2026" ou "APL-TC 00055/26"). ` +
+    "Nenhuma requisição foi feita (isto NÃO quer dizer que a decisão não existe)."
+  );
+}
+
+/** Forma do portal quando o número é reconhecível; senão devolve o valor como veio (quem chama recusa com `mensagemFormatoNumeroTc`). */
 export function padronizarNumero(v) {
-  if (v && v.length < 8 && RE_NUMERO_ACORDAO_PROCESSO.test(v)) {
-    return v.padStart(8, "0");
-  }
-  return v;
+  const r = normalizarNumeroTc(v);
+  return r.valido ? r.forma : v;
 }
 
 const RE_MD_CABECALHO = /^(\s{0,3})(#{1,6}\s)/gm;
@@ -820,6 +850,16 @@ function posicaoTceroTrecho(texto, alvo, inicio, fragmentos) {
   return meio !== null ? posicaoTcero(texto, meio) : "";
 }
 
+/** Pendências do red team 22/10/2026 (achado médio, caminho pelo portal): o campo `ementa` isolado não tem as marcas do PDF e `posicaoTcero`
+ * devolvia "" — a pergunta da "Questão em discussão" saía ✅ com VOZ DA CASA, sem POSIÇÃO. Aqui a seção é lida dentro da própria ementa;
+ * ementa sem seções (modelo antigo) continua sem linha de POSIÇÃO, como antes. */
+function posicaoEmentaIsolada(texto, alvo, inicio, fragmentos) {
+  const meio = meioDoTrecho(texto, alvo, inicio, fragmentos);
+  // só quando o trecho cai DENTRO de uma seção (o cabeçalho de palavras-chave antes da 1ª seção não é "modelo antigo, sem seções")
+  if (meio === null || !secoesDaEmenta(texto, 0, texto.length, true).some((x) => x.a <= meio && meio < x.b)) return "";
+  return posicaoGenerica(texto, meio, { ementa: [0, texto.length], tce: true }).replace(/^ementa(?= ›)/, "ementa (campo do portal)");
+}
+
 function paginaDoTrecho(texto, alvo, inicio, fragmentos) {
   const meio = meioDoTrecho(texto, alvo, inicio, fragmentos);
   return meio !== null ? paginaPdfTcero(texto, meio) : "";
@@ -964,10 +1004,17 @@ export function alertasMaioria(bruto, posicao, meio = null) {
   const pn = norm1(posicao || "");
   const condutor = pn.startsWith("fundamentacao do voto condutor") || pn.startsWith("dispositivo do voto");
   const outro = pn.startsWith("voto de outro conselheiro");
-  if (!condutor && !outro) return [];
+  const incerto = pn.startsWith("voto de conselheiro (titulo:");
+  if (!condutor && !outro && !incerto) return [];
   const f = maioriaDoFecho(bruto);
   if (!f.maioria) return [];
   const fechoTxt = f.literal ? ` («${f.literal}»)` : "";
+  // pendências do red team: voto de autoria não confirmada (relator não lido) num julgamento por maioria — nunca afirma o lado, só "confira"
+  if (incerto)
+    return [
+      `JULGAMENTO POR MAIORIA: o fecho registra vencido(s)${fechoTxt} e a ferramenta não leu o relator — o trecho está num voto cuja ` +
+        "autoria não foi confirmada e pode ser o vencido. Confira de quem é o voto e se ele ficou vencido antes de citar.",
+    ];
   const outros = votosOutrosTc(bruto);
   // voto separado = segmento com texto próprio além do título (uma assinatura "CONSELHEIRO NOME" solta no fim não separa voto nenhum)
   const comTexto = outros.filter((s) => bruto.slice(s.a, s.b).replace(/[ \t\n\r\f\v]+/g, " ").trim().length - s.titulo.length >= MIN_TEXTO_VOTO_SEPARADO);
@@ -1058,6 +1105,8 @@ export function parteDoJulgadoTc(posicao) {
   const p = posicao || "";
   const t = /^VOTO de outro conselheiro \(título: «([^»]*)»/.exec(p);
   if (t) return `voto de outro conselheiro «${t[1]}»`;
+  const ti = /^voto de conselheiro \(título: «([^»]*)»\) — autoria não confirmada/.exec(p);   // relator não lido: parte conhecida, dono não
+  if (ti) return `voto de conselheiro «${ti[1]}»`;
   if (p.startsWith("ementa do cadastro")) return "ementa do cadastro";
   if (p.startsWith("ementa")) return "ementa";
   if (p.startsWith("acórdão/fecho")) return "acórdão/fecho";
@@ -1164,7 +1213,8 @@ export function verificarTrecho(textos, trecho) {
     }
     if (!faltando.length) {
       const alertas = alertasAtribuicao(alvo, inicio, fim, texto, fragmentos);
-      const posicao = posicaoTceroTrecho(texto, alvo, inicio, fragmentos);
+      let posicao = posicaoTceroTrecho(texto, alvo, inicio, fragmentos);
+      if (!posicao && norm1(nome).startsWith("ementa")) posicao = posicaoEmentaIsolada(texto, alvo, inicio, fragmentos);
       alertas.push(...alertasMaioria(texto, posicao, meioDoTrecho(texto, alvo, inicio, fragmentos)));
       const pagina = paginaDoTrecho(texto, alvo, inicio, fragmentos);
       const voz = alertaVozDaCasa(nome, posicao, pagina);
@@ -1833,6 +1883,14 @@ function transacao(fn) {
 }
 
 export function resetDisjuntorParaTeste() {
+  // Pendências do red team 22/10/2026 (achado baixo, defesa em profundidade além do test/_isolar.mjs): apagar o estado do disjuntor só numa
+  // pasta de estado EXPLÍCITA (TCERO_MCP_DIR_ESTADO) e nunca na pasta real ~/.tcero-jurisprudencia — um teste rodado sem isolamento
+  // zeraria um bloqueio auto-imposto em curso e o histórico de incidentes do advogado.
+  const real = path.join(process.env.TCERO_TESTE_HOME_REAL || os.homedir(), ".tcero-jurisprudencia");
+  const dir = path.dirname(arquivoEstadoDisjuntor);
+  if (!process.env.TCERO_MCP_DIR_ESTADO || path.resolve(dir) === path.resolve(real) || path.resolve(dir).startsWith(path.resolve(real) + path.sep)) {
+    throw new Error(`resetDisjuntorParaTeste recusado: ${dir} não é pasta de estado isolada (defina TCERO_MCP_DIR_ESTADO numa pasta temporária)`);
+  }
   try {
     fs.unlinkSync(arquivoEstadoDisjuntor);
   } catch {
@@ -1980,9 +2038,20 @@ export function falhaTransitoria(codigoOuNome) {
   return nomes.has(codigoOuNome);
 }
 
-export function linhasVerificacaoItem(s, trecho, textos) {
+/** `pdfRecibo` (só no caminho do recibo): o `texto_pdf_completo` do recibo — null/undefined = PDF não lido, false = lido em parte, true = inteiro.
+ * Pendências do red team 22/10/2026 (achado médio): recibo sem o inteiro teor dava "❌ NÃO ENCONTRADO — parafraseie ou corrija" a trecho que
+ * está no voto. Sem o PDF inteiro, a ausência só vale para ementa + dispositivo (+ a parte lida): sai ⚠️ NÃO VERIFICÁVEL NO INTEIRO TEOR. */
+export function linhasVerificacaoItem(s, trecho, textos, { pdfRecibo = true } = {}) {
   const r = verificarTrecho(textos, trecho);
-  const marca = r.valido ? "✅ VÁLIDO" : r.distante ? (r.tipo === "partes" ? "🟠 CONFIRA (fragmentos em partes diferentes)" : "🟠 CONFIRA (fragmentos distantes)") : r.sem_texto ? "⚠️ NÃO VERIFICÁVEL" : "❌ NÃO ENCONTRADO";
+  const semInteiroTeor = pdfRecibo !== true && !r.valido && !r.distante && !r.sem_texto && r.faltando && r.faltando.length > 0 && !/curto demais/.test(r.motivo || "");
+  if (semInteiroTeor) {
+    const leitura = pdfRecibo === false ? "o PDF do inteiro teor foi lido só EM PARTE" : "o PDF do inteiro teor NÃO foi lido";
+    r.motivo =
+      `trecho não encontrado no que o recibo tem — mas ${leitura} neste recibo (ele cobre ementa + dispositivo` +
+      `${pdfRecibo === false ? " + a parte lida do PDF" : ""}), então isto NÃO prova que o trecho não está no voto. Rode ` +
+      `obter_acordao_tcero(id_decisao=${s.idDecisao}, ler_inteiro_teor=true) e verifique de novo; até lá, não cite entre aspas`;
+  }
+  const marca = r.valido ? "✅ VÁLIDO" : r.distante ? (r.tipo === "partes" ? "🟠 CONFIRA (fragmentos em partes diferentes)" : "🟠 CONFIRA (fragmentos distantes)") : r.sem_texto ? "⚠️ NÃO VERIFICÁVEL" : semInteiroTeor ? "⚠️ NÃO VERIFICÁVEL NO INTEIRO TEOR" : "❌ NÃO ENCONTRADO";
   const linhas = [`${marca} · id ${s.idDecisao} · ${s.sigla || "?"} ${s.numero || "?"} · ${r.motivo}`];
   if (r.valido && r.alertas && r.alertas.length) {
     for (const a of r.alertas) {
@@ -2118,6 +2187,11 @@ export function alertaVozDaCasa(nome, posicao, pagina = "") {
   const nomeN = norm1(nome || "");
   const posN = norm1(posicao || "");
   let onde;
+  // pendências do red team 22/10/2026: na ementa, VOZ DA CASA fica para tese, razões/entendimento e dispositivo. "Caso em exame" é narração,
+  // "Questão em discussão" é a PERGUNTA posta (recortada sem o "se"), a parte final (dispositivos e jurisprudência citados) é referência —
+  // não afirmação da Corte. O "Fundamento" do modelo do TCE-RO traz razões da própria Corte (visto nas ementas da fixture) e mantém a nota.
+  // A linha de POSIÇÃO já diz qual é a seção.
+  if (/ementa[^›]*› (?:i\. caso em exame|ii\. questao em discussao|parte final)/.test(posN)) return null;
   if (nomeN.startsWith("ementa") || nomeN.startsWith("dispositivo")) onde = nome;
   else if (posN.startsWith("ementa") || posN.startsWith("acordao/fecho")) onde = posicao;
   else return null;

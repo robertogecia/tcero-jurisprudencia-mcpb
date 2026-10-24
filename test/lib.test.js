@@ -45,7 +45,10 @@ test("_padronizar_numero", () => {
   assert.equal(L.padronizarNumero(""), "");
   assert.equal(L.padronizarNumero("abc"), "abc");
   assert.equal(L.padronizarNumero("55"), "55");
-  assert.equal(L.padronizarNumero("1/2"), "000001/2");
+  // pendências do red team 22/10/2026: o padStart(8) cego gerava número que ninguém digitou ("1/2" → "000001/2", "55/2026" → "055/2026");
+  // fora de NNNNN/AA o valor volta como veio e quem chama recusa por formato (redteam_221026_pendencias.test.js)
+  assert.equal(L.padronizarNumero("1/2"), "1/2");
+  assert.equal(L.padronizarNumero("55/2026"), "00055/26");
 });
 
 test("_html_para_texto", () => {

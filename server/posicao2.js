@@ -16,7 +16,9 @@ const ROTULO = {
   "dispositivo e tese": "ementa › IV. DISPOSITIVO E TESE — resultado e tese enunciada",
   "dispositivo": "ementa › IV. DISPOSITIVO — resultado do julgamento",
   "entendimento": "ementa › III. ENTENDIMENTO — a tese que o Tribunal de Contas firmou (candidato a ratio; confira no voto)",
-  "fundamento": "ementa › IV. FUNDAMENTO — base normativa e precedentes citados, não tese",
+  // só o modelo do TCE-RO gera esta seção (tce=true). Pendências do red team 22/10/2026: o "Fundamento" dessas ementas traz razões da Corte
+  // ("A reincidência específica … configura circunstância agravante"), não só base normativa — o rótulo "não tese" mandava descartá-las.
+  "fundamento": "ementa › IV. FUNDAMENTO — fundamentos resumidos na ementa (normas, precedentes e razões da Corte; confira no voto se o resultado dependeu deles)",
   "cauda": "ementa › parte final (dispositivos e jurisprudência citados, resumo) — referência, não tese",
 };
 const SECAO_CNJ = "caso em exame|quest(?:ao|oes) em discussao|razoes de decidir|dispositivos? e teses?|dispositivo";
@@ -59,7 +61,7 @@ export function posicaoGenerica(texto, meio, { ementa = null, relatorio = null, 
   if (dentro(fecho)) return "acórdão/fecho (o que o colegiado proclamou)";
   if (dentro(certidao)) return "certidão de julgamento (quem votou e como; não é fundamentação)";
   if (dentro(relatorio)) return "RELATÓRIO — narração do processo e das teses das partes, não decisão";
-  for (const [a, b, rot] of outros) if (a <= meio && meio < b) return `${rot} — não é o voto condutor (vencido, vista, vogal ou ementa proposta em outro voto); veja quem venceu`;
+  for (const [a, b, rot, cru] of outros) if (a <= meio && meio < b) return cru ? rot : `${rot} — não é o voto condutor (vencido, vista, vogal ou ementa proposta em outro voto); veja quem venceu`;
   for (const [a, b] of votos) {
     if (!(a <= meio && meio < b)) continue;
     let disp = dispIni !== null && a <= dispIni && dispIni < b ? dispIni : -1;
@@ -170,6 +172,31 @@ export function palavrasDeNomeTc(x) {
 const QUALIF_TITULO_TC = new Set(["divergente", "vencido", "vencida", "convergente", "vencedor", "vencedora", "parcialmente", "separado", "em"]);
 const RE_QUALIF_OUTRO_TC = /(?<![a-z0-9])(?:divergente|vencid[oa]|convergente|vencedora?)(?![a-z0-9])/;
 
+// Pendências do red team 22/10/2026 (achado médio: voto do PRÓPRIO relator rotulado "de outro conselheiro"). No PDF 77649 o pdf.js extrai a
+// autuação em duas colunas ("RELATOR\nSESSÃO\n:\n:\nConselheiro-Substituto Omar Pires Dias") e a captura antiga lia "SESSÃO" como relator.
+// Agora: (1) a captura que é outro rótulo de autuação, ":" ou vazia é rejeitada e se procura a linha "Conselheir…" logo abaixo;
+// (2) sem nome no cabeçalho, vale o fecho ("…Voto do Relator, Conselheiro[-Substituto] NOME"), só na 1ª ocorrência, antes do RELATÓRIO;
+// (3) sem relator confiável, nenhum voto é dito "de outro conselheiro" (ver `segmentosTc`).
+const RE_ROTULO_AUTUACAO_TC = /^[ \t]*(?:PROCESSO|ASSUNTO|JURISDICIONAD|INTERESSAD|RESPONS[ÁA]VE|ADVOGAD|UNIDADE|RELATOR|SESS[ÃA]O|GRUPO|EMBARGANTE|EMBARGAD|RECORRENTE|RECORRID|REQUERENTE|CATEGORIA|SUBCATEGORIA|EXERC[ÍI]CIO|PROCURADOR|IMPETRANTE|REPRESENTANTE|REPRESENTAD|ORIGEM|NATUREZA)\b/i;
+const linhaSoRotulo = (x) => !stripPy(x, WS_PY + ":.-–").length || RE_ROTULO_AUTUACAO_TC.test(x) || !sobrenTc(x).length;
+const RE_RELATOR_FECHO_TC = /Voto d[oa] Relator[a]?,?[ \t\n]*Conselheir[oa](?:[ \t]*-[ \t]*|[ \t\n]+)?(?:Substitut[oa][ \t\n]+)?([^,(\n]{3,90})/i;
+export function relatorTc(bruto) {
+  const mRel = /RELATOR[A]?[ \t]*:?[ \t]*\n?[ \t]*([^\n]{3,90})/.exec(bruto);
+  if (mRel) {
+    if (!linhaSoRotulo(mRel[1])) return sobrenTc(mRel[1]);
+    // layout em duas colunas: pula as linhas de rótulo e de ":" até a 1ª linha "Conselheir…" (no máximo 8 linhas abaixo)
+    const linhas = bruto.slice(mRel.index, mRel.index + 800).split("\n").slice(1, 9);
+    const l = linhas.find((x) => /^[ \t]*Conselheir[oa]/i.test(x));
+    if (l) {
+      const nome = sobrenTc(l.replace(/\([^)]*\)?/g, " "));
+      if (nome.length) return nome;
+    }
+  }
+  const iniRel = bruto.search(/(?:^|\n)[ \t]*RELAT[ÓO]RIO[ \t]*(?:\n|$)/);
+  const mF = RE_RELATOR_FECHO_TC.exec(iniRel > 0 ? bruto.slice(0, iniRel) : bruto);
+  return mF ? sobrenTc(mF[1]) : [];
+}
+
 /** Segmentos do corpo (RELATÓRIO e votos) → { marcas, segs: [{a, b, dono, titulo, nome}], relator }. Fonte ÚNICA de quem é dono de cada
  * voto — `posicaoTcero` rotula por ela e `alertasMaioria` (lib.js) cruza o fecho com ela (red team 22/10/2026, rodada 2: o alerta de voto
  * vencido tem de depender do segmento que a própria posição atribuiu ao vencido, não de existir uma linha com o nome dele).
@@ -196,8 +223,7 @@ export function segmentosTc(bruto) {
       if (novos) marcas.sort((a, b) => a[0] - b[0]);
     }
   }
-  const mRel = /RELATOR[A]?[ \t]*:?[ \t]*\n?[ \t]*([^\n]{3,90})/.exec(bruto);
-  const relator = mRel ? sobrenTc(mRel[1]) : [];
+  const relator = relatorTc(bruto);
   const fimLinha = (p) => { const k = bruto.indexOf("\n", p); return k >= 0 ? k : n; };
   const tituloVoto = (p) => bruto.slice(p, fimLinha(p)).replace(/[ \t\n\r\f\v]+/g, " ").trim().slice(0, 80);
   // a 2ª linha do título: linha "CONSELHEIRO NOME" marcada como continuação, logo depois da linha deste título
@@ -219,7 +245,8 @@ export function segmentosTc(bruto) {
       titulo = `${titulo} ${tituloVoto(l2[0])}`.slice(0, 120);
     }
     let dono;
-    if (nomes.length) dono = relator.length && (relator.includes(nomes[nomes.length - 1]) || nomes.includes(relator[relator.length - 1])) ? "relator" : "outro";
+    // pendências do red team: sem relator confiável, o voto com nome não é "de outro conselheiro" — é de autoria não confirmada
+    if (nomes.length) dono = !relator.length ? "incerto" : relator.includes(nomes[nomes.length - 1]) || nomes.includes(relator[relator.length - 1]) ? "relator" : "outro";
     else if (RE_QUALIF_OUTRO_TC.test(r)) dono = "outro";   // "VOTO DIVERGENTE"/"VOTO VENCIDO" sem nome: nunca do condutor
     else dono = donoAnt || "relator";
     segs.push({ a: p, b: f, dono, titulo, nome: nomes.length ? palavrasDeNomeTc(l2 ? l2[1] : r) : [] });
@@ -267,6 +294,10 @@ export function posicaoTcero(bruto, meio) {
   const votos = segs.filter(([, , d]) => d === "relator").map(([a, b]) => [a, b]);
   // v1.6.0: o título do voto (linha do cabeçalho) diz de QUEM é e onde ele começa (rodada 2: com a 2ª linha do título, quando o nome está nela)
   const outros = segs0.filter((x) => x.dono === "outro").map(({ a, b, titulo }) => [a, b, `VOTO de outro conselheiro (título: «${titulo}»)`]);
+  for (const { a, b, titulo } of segs0.filter((x) => x.dono === "incerto"))
+    outros.push([a, b, `voto de conselheiro (título: «${titulo}») — autoria não confirmada: o relator não foi lido do cabeçalho nem do fecho, ` +
+      "então a ferramenta não sabe se este é o voto condutor ou o de outro conselheiro; confira no fecho quem venceu", true]);
+  outros.sort((x, y) => x[0] - y[0]);
   const rel = rs ? rs[0] : -1;
   const voto = votos.length ? votos[0][0] : -1;
   const tnAll = norm1(bruto);

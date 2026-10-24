@@ -2,6 +2,14 @@
 
 O histórico anterior (1.2.0 a 1.5.3) está no fim do `README.md`.
 
+## 1.7.6
+
+Correções de conferência, encontradas numa revisão adversarial.
+
+- O número do acórdão é aceito em várias grafias ("55/2026", "APL-TC 00055/26", "Acórdão 0000055/26", "55 / 26") e normalizado antes de buscar, obter, verificar ou procurar julgados que citam. Número fora do formato é recusado com mensagem de formato, nunca com "nenhuma decisão encontrada".
+- Acórdão de outra sigla com o mesmo número (por exemplo, AC1-TC e APL-TC 00120/25) deixou de ser descartado calado como "o próprio julgado": aparece num bloco à parte, para você conferir.
+- O voto do próprio relator não é mais apresentado como "de outro conselheiro" quando a autuação do PDF vem em duas colunas; sem relator confiável, nenhum voto é atribuído a outro conselheiro.
+
 ## 1.7.5
 
 Correções de conferência de citação, encontradas numa revisão adversarial.

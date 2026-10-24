@@ -548,6 +548,9 @@ async function buscar(textoLivre, numeroAcordao, numeroProcesso, relator, orgaoJ
   const params = {};
   const textoLivreCombinado = L.montarTextoLivreComGrupos(textoLivre, gruposOk);
   if (textoLivreCombinado) params.textoLivre = textoLivreCombinado;
+  for (const [v, campo] of [[numeroAcordao, "numero_acordao"], [numeroProcesso, "numero_processo"]]) {
+    if (L.texto(v) && !L.normalizarNumeroTc(v).valido) return L.mensagemFormatoNumeroTc(v, campo);
+  }
   if (L.texto(numeroAcordao)) params.numeroAcordao = L.padronizarNumero(L.texto(numeroAcordao));
   if (L.texto(numeroProcesso)) params.numeroProcesso = L.padronizarNumero(L.texto(numeroProcesso));
 
@@ -723,6 +726,11 @@ async function obterAcordao(idDecisao, numeroAcordao, numeroProcesso, lerInteiro
   if (!idTxt && !acTxt && !procTxt) {
     return "Informe id_decisao (mais direto), ou numero_acordao, ou numero_processo.";
   }
+  if (!idTxt) {
+    for (const [v, campo] of [[acTxt, "numero_acordao"], [procTxt, "numero_processo"]]) {
+      if (v && !L.normalizarNumeroTc(v).valido) return L.mensagemFormatoNumeroTc(v, campo);
+    }
+  }
   let dados;
   try {
     if (idTxt) {
@@ -740,7 +748,7 @@ async function obterAcordao(idDecisao, numeroAcordao, numeroProcesso, lerInteiro
   const resultados = dados.result || [];
   if (!resultados.length) {
     const alvo = idTxt || acTxt || procTxt;
-    return `Nenhuma decisão encontrada para ${L.pyRepr(alvo)} no portal do TCE-RO. Confira o número/id.`;
+    return `Nenhuma decisão encontrada para ${L.pyRepr(alvo)}${idTxt ? "" : comoConsultado(alvo)} no portal do TCE-RO. Confira o número/id.`;
   }
   const linhas = [];
   if (resultados.length > 1) {
@@ -810,12 +818,20 @@ function agoraIso() {
   );
 }
 
+/** " (consultado no portal como '00055/26')" quando a forma enviada difere do que foi digitado; "" quando é a mesma. */
+function comoConsultado(v) {
+  const r = L.normalizarNumeroTc(v);
+  return r.valido && r.forma !== L.texto(v) ? ` (consultado no portal como ${L.pyRepr(r.forma)})` : "";
+}
+
 async function verificarCitacao(idDecisao, numeroAcordao, trecho) {
   if (!L.texto(trecho)) return "Informe o trecho que pretende citar entre aspas.";
   const idTxt = L.texto(idDecisao);
   const acTxt = L.texto(numeroAcordao);
   if (!idTxt && !acTxt) return "Informe id_decisao (preferível) ou numero_acordao.";
 
+  const nAc = acTxt ? L.normalizarNumeroTc(acTxt) : null;
+  if (!idTxt && !nAc.valido) return L.mensagemFormatoNumeroTc(acTxt, "numero_acordao");
   if (idTxt) {
     const recibo = L.lerReciboTcero(idTxt);
     if (recibo !== null) {
@@ -825,7 +841,7 @@ async function verificarCitacao(idDecisao, numeroAcordao, trecho) {
         `Fonte do texto conferido: RECIBO local (gravado em ${recibo.gravado_em || "?"}, ` +
           "zero requisição ao portal — ver diagnostico_ritmo_tcero para o disjuntor não ter sido tocado).",
       ];
-      linhas.push(...L.linhasVerificacaoItem(sRecibo, trecho, textos));
+      linhas.push(...L.linhasVerificacaoItem(sRecibo, trecho, textos, { pdfRecibo: recibo.texto_pdf_completo }));
       const rodapeRecibo =
         "\nCobre ementa + dispositivo + (quando já lido com ler_inteiro_teor=true) o inteiro teor em " +
         "PDF — NÃO as \"informações adicionais\" (IA do DEJUR). Comparação tolerante a caixa, acento, " +
@@ -847,12 +863,24 @@ async function verificarCitacao(idDecisao, numeroAcordao, trecho) {
     return formatarErroPortal(e, "Erro na consulta ao TCE-RO");
   }
 
-  const resultados = dados.result || [];
+  let resultados = dados.result || [];
   if (!resultados.length) {
     const alvo = idTxt || acTxt;
-    return `Nenhuma decisão sob ${L.pyRepr(alvo)} — não há como verificar; não cite.`;
+    return `Nenhuma decisão sob ${L.pyRepr(alvo)}${idTxt ? "" : comoConsultado(acTxt)} — não há como verificar; não cite.`;
+  }
+  // pendências do red team: número com sigla ("APL-TC 00055/26") — confere só as decisões dessa sigla, quando há alguma
+  let avisoSigla = "";
+  if (!idTxt && nAc.sigla) {
+    const daSigla = resultados.filter((it) => L.texto((it.source || {}).sigla).toUpperCase() === nAc.sigla);
+    if (daSigla.length && daSigla.length < resultados.length) {
+      avisoSigla = `Sigla informada ${nAc.sigla}: conferidas só as ${daSigla.length} decisão(ões) com essa sigla, de ${resultados.length} sob ${nAc.forma}.`;
+      resultados = daSigla;   // cópia: a resposta do portal pode estar no cache e não se altera
+    } else if (!daSigla.length) {
+      avisoSigla = `⚠️ Nenhuma das ${resultados.length} decisão(ões) sob ${nAc.forma} tem a sigla ${nAc.sigla} — conferidas todas; confira a sigla antes de citar.`;
+    }
   }
   const linhas = ["Fonte do texto conferido: PORTAL (sem recibo local para conferir sem rede; obter_acordao_tcero grava um)."];
+  if (avisoSigla) linhas.push(avisoSigla);
   if (resultados.length > 1) {
     linhas.push(
       `⚠️ ${Math.min(resultados.length, L.TETO_DECISOES_VERIFICADAS)} de ${resultados.length} decisões sob ` +
@@ -1162,24 +1190,32 @@ server.registerTool(
 );
 
 // v1.7.0 — julgados_que_citam_tcero: UMA consulta ao portal (frase entre aspas) + recibos locais (sem rede). Só o filtro local do número decide.
-async function julgadosQueCitam(numero, limite = 10) {
+async function julgadosQueCitam(numero, limite = 10, tipo = null) {
   const c = V7.numeroCitado(numero);
   if (!c) return "Informe o número no formato do portal, NNNNN/AA (1 a 5 dígitos, barra, 2 dígitos), de um processo ou de um acórdão. Nenhuma requisição foi feita.";
   const [forma, n, aa] = c;
+  // pendências do red team 22/10/2026: a sigla ("APL-TC 00037/23") e o tipo chegam ao filtro do próprio julgado (antes, código morto)
+  const nn = L.normalizarNumeroTc(numero);
+  if (tipo !== null && tipo !== undefined && tipo !== "processo" && tipo !== "acordao") {
+    return `tipo inválido: ${L.pyRepr(tipo)}; use "processo" ou "acordao" (ou omita). Nenhuma requisição foi feita.`;
+  }
+  if (tipo === "processo" && nn.sigla) return `"${numero}" traz sigla de acórdão (${nn.sigla}) e tipo="processo" — escolha um. Nenhuma requisição foi feita.`;
+  const sigla = nn.sigla;
+  tipo = tipo || nn.tipo || null;
   limite = Math.max(1, Math.min(parseInt(limite, 10) || 10, 50));
-  const info = {};
+  const info = { sigla };
   let portal = null;
   try {
     const dados = await _consultarApiImpl({ textoLivre: `"${forma}"` }, "citacoes");
     const itens = dados.result || [];
-    [portal, info.proprias, info.sem_numero] = V7.citacoesNoPortal(itens, forma, n, aa);
+    [portal, info.proprias, info.sem_numero] = V7.citacoesNoPortal(itens, forma, n, aa, sigla, tipo);
     info.total_portal = itens.length;
   } catch (e) {
     portal = null;
     if (e instanceof PortalRecusou || e instanceof L.ErroEntrada || e?.constructor === Error) info.erro = L.umaLinha(String(e.message || e)).slice(0, 300);
     else info.erro = `${e?.constructor?.name || "Error"}: ${L.umaLinha(String(e?.message || e)).slice(0, 200)}`;
   }
-  const recibos = V7.citacoesNosRecibos(forma, n, aa);
+  const recibos = V7.citacoesNosRecibos(forma, n, aa, null, sigla, tipo);
   const linhas = V7.formatarCitacoes(forma, portal, recibos, limite, info).split("\n");
   // a linha "… e mais N" sai antes do corte e volta depois dele: o corte é em fronteira de resultado inteiro, e o "e mais" nunca se perde
   const mais = linhas.filter((l) => l.startsWith("… e mais "));
@@ -1201,14 +1237,15 @@ server.registerTool(
       "o portal indexa texto (ementa, dispositivo e informações adicionais) e o PDF do inteiro teor NÃO é varrido, então o recall é baixo; citação por extenso ou sem a forma " +
       "NNNNN/AA não é achada. Os recibos cobrem só o que esta máquina já leu. O portal casa por OU quando não honra a frase; por isso só se listam as decisões que trazem o número no texto devolvido.",
     inputSchema: {
-      numero: z.string().describe('Número do processo ou do acórdão julgado citado, no formato do portal, ex.: "00037/23" ou "37/23".'),
+      numero: z.string().describe('Número do processo ou do acórdão julgado citado, no formato do portal, ex.: "00037/23" ou "37/23"; com a sigla do acórdão, ex.: "APL-TC 00037/23", a ferramenta separa o próprio julgado de outro acórdão com o mesmo número.'),
       limite: z.number().int().optional().describe("Quantos achados mostrar (1 a 50; padrão 10)."),
+      tipo: z.enum(["processo", "acordao"]).optional().describe('"processo" se o número é de processo; "acordao" se é de acórdão (a sigla no número já diz isso). Sem ele, decisões com o mesmo número em outra sigla ou processo saem num bloco à parte, para conferir.'),
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
   async (a) => {
     try {
-      const texto = await V.comDiario("julgados_que_citam_tcero", { numero: a.numero, limite: a.limite }, () => julgadosQueCitam(a.numero, a.limite ?? 10));
+      const texto = await V.comDiario("julgados_que_citam_tcero", { numero: a.numero, limite: a.limite, tipo: a.tipo }, () => julgadosQueCitam(a.numero, a.limite ?? 10, a.tipo ?? null));
       return { content: [{ type: "text", text: L.finalizarSaida(texto) }] };
     } catch (e) {
       return { content: [{ type: "text", text: L.finalizarSaida(formatarErroPortal(e, `Erro ao consultar o portal do TCE-RO (${e.constructor.name})`)) }], isError: true };

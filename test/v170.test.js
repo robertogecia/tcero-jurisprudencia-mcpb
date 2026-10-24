@@ -120,7 +120,9 @@ test("julgados_que_citam: número e regex", () => {
   assert.deepEqual(V7.numeroCitado("37/23"), ["00037/23", "37", "23"]);
   assert.deepEqual(V7.numeroCitado(" 00037/23 "), ["00037/23", "37", "23"]);
   assert.deepEqual(V7.numeroCitado("02603/22"), ["02603/22", "2603", "22"]);
-  for (const ruim of ["", "37", "37/2023", "abc/23", "123456/23", "37-23", "02603/22/TCE"]) assert.equal(V7.numeroCitado(ruim), null, ruim);
+  // pendências do red team 22/10/2026: mesma normalização das outras ferramentas — "37/2023" (ano com 4 dígitos) agora é 00037/23
+  assert.deepEqual(V7.numeroCitado("37/2023"), ["00037/23", "37", "23"]);
+  for (const ruim of ["", "37", "37/1823", "abc/23", "123456/23", "37-23", "02603/22/TCE"]) assert.equal(V7.numeroCitado(ruim), null, ruim);
   const rx = V7.regexNumeroCitado("37", "23");
   for (const bom of ["Acórdão APL-TC 00037/23, rel.", "APLTC 37/23.", "(00037/23)", "Proc. 00037/23/TCE-RO", "n. 0037 / 23"]) assert.ok(rx.test(bom), bom);
   for (const mau of ["100037/23", "00037/2023", "dia 15/37/23", "x/00037/23", "00037/230", "00037/23/24"]) assert.ok(!rx.test(mau), mau);

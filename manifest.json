@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "tcero-jurisprudencia",
   "display_name": "Jurisprudência TCE-RO",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "description": "Criado pelo advogado @robertogrecia, esta ferramenta ajuda você a encontrar decisões do Tribunal de Contas de Rondônia sobre licitação, contas de gestor e atos de pessoal, e conferir se uma citação é de verdade.",
   "long_description": "**Pesquisa.** Busque no acervo do TCE-RO por texto livre, número de acórdão, número de processo, relator ou órgão julgador. Você pode combinar mais de um conceito, e a extensão filtra o que o portal não sabe filtrar.\n\n**Leitura.** Abra a decisão com ementa, dispositivo e a tese da ementa, e peça o relatório e o voto completos quando precisar. Se o documento for digitalizado ou longo demais, a extensão diz isso claramente.\n\n**Conferência.** Antes de pôr uma frase entre aspas, confira se ela está mesmo na decisão. A extensão avisa quando a frase pode não ser posição da própria Corte, por exemplo se for do Ministério Público de Contas, do corpo técnico, da parte ou de outro tribunal.\n\n**Outros recursos.** Descubra quais decisões citam um processo, veja quantas decisões saíram por ano e por órgão, receba sugestões de palavras que o tribunal realmente usa no seu assunto e reencontre, sem consultar o portal, o que você já leu.\n\n**Cuidados.** A ferramenta é não oficial, mantida por um advogado. O campo \"informações adicionais\" é gerado com apoio de inteligência artificial pelo próprio tribunal e nunca deve ser citado como texto do acórdão. Confirme número, relator, órgão e ementa antes de citar em peça.",
   "author": {
