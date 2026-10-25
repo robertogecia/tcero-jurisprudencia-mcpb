@@ -9,6 +9,7 @@
 // porte deve poder ser acrescentada aqui sem mexer em index.js.
 
 import { norm1, negacaoEscopo, negacaoProxima, entreAspas, obiterAntesComPos } from "./atribuicao13.js";
+import { guardaVozDaCasa, naoEVozDoOrgao, alegacaoTc, faixasIntroduzidasTc, concessivaNegativa, costuraCurtaTc, relaxarTexto, relaxarTrecho, precisaRelaxar, metadesNegativas, RE_RELATOR_VENCIDO_POS, RE_VOTO_RELATOR_VENCIDO } from "./voz_tc.js";
 import { posicaoTcero, posicaoGenerica, RE_PAGINA_TC, secoesDaEmenta, votosOutrosTc, palavrasDeNomeTc, segmentosTc, linhasConselheiroTc } from "./posicao2.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -31,7 +32,7 @@ export const HEADERS_BASE = {
   "Accept-Language": "pt-BR,pt;q=0.9",
 };
 
-export const VERSAO = "1.7.6";
+export const VERSAO = "1.7.7";
 export const RELEASES_API = "https://api.github.com/repos/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const RELEASES_PAGINA = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest";
 export const PACOTE_MCPB_URL = "https://github.com/robertogecia/tcero-jurisprudencia-mcp/releases/latest/download/Jurisprudencia-TCERO.mcpb";
@@ -755,6 +756,30 @@ export function alertasAtribuicao(alvoNorm, inicio, fim, bruto = null, fragmento
     fx = faixaNorm(nt1, fragmentos, inicio / Math.max(1, alvoNorm.length));
   }
   if (fx !== null) {
+    // Reataque Fable (25/10/2026), também na 1.7.6 publicada: o [...] pode tirar a negação ("[...] se presta" no texto "não se presta"). juizoElipseTc
+    // só julga parte e distância, nunca o conteúdo do vão: a negação omitida entre dois fragmentos agora avisa e tira o ✅ pleno.
+    if (fragmentos.length > 1) {
+      const regiao = nt1.slice(fx[0], fx[1]);
+      let pos = 0, fimAnt = -1;
+      for (const fr of fragmentos) {
+        const ws = norm1(fr).match(/[a-z0-9]+/g);
+        if (!ws) continue;
+        const re = new RegExp("(?<![a-z0-9])" + ws.join("[^a-z0-9]+") + "(?![a-z0-9])", "g");
+        re.lastIndex = pos;
+        const m = re.exec(regiao);
+        if (!m) { fimAnt = -1; continue; }
+        if (fimAnt >= 0) {
+          const vao = regiao.slice(fimAnt, m.index);
+          if (/(?<![a-z0-9])(?:nao|nem|jamais|nunca|sem|tampouco)(?![a-z0-9])/.test(vao.slice(-80)) && !alertas.some((x) => x.startsWith("NEGAÇÃO OMITIDA"))) {
+            alertas.push('NEGAÇÃO OMITIDA NO CORTE: o [...] tira uma negativa («' + vao.trim().slice(-80).replace(/\s+/g, " ") + '») que pode reger o trecho seguinte — o recorte pode inverter o julgado. Não citar sem a negativa ou sem ler a frase inteira.');
+          }
+        }
+        pos = m.index + m[0].length; fimAnt = pos;
+      }
+    }
+    // Medição cega (25/10/2026): "sem pronúncia de / declaração de / reconhecimento de nulidade" cortado antes do trecho não era negação
+    if (!negacaoEscopo(nt1, fx[0], fx[1], bruto) && /(?<![a-z0-9])sem (?:pronuncia|declaracao|decretacao|reconhecimento|aplicacao|imposicao)\s+de\s*$/.test(nt1.slice(Math.max(0, fx[0] - 40), fx[0])))
+      alertas.push('NEGAÇÃO: o trecho vem logo depois de "sem pronúncia/declaração/reconhecimento de…" — o recorte pode inverter o sentido do julgado. Não citar sem ler a frase inteira.');
     if (negacaoEscopo(nt1, fx[0], fx[1], bruto))
       alertas.push(negacaoProxima(nt1, fx[0]) ?
         'NEGAÇÃO: há negação que alcança o trecho ("não"/"nem"/"sem razão"/"afasto"/"julgo improcedente"...), ' +
@@ -791,6 +816,18 @@ export function alertasAtribuicao(alvoNorm, inicio, fim, bruto = null, fragmento
         "relatada no acórdão, não a decisão da Corte."
     );
   }
+  // 1.7.7 (porte do TJRO 1.41.9): alegação com sujeito do processo de contas e verbo que a regra antiga não tinha ("afirma",
+  // "assevera", "pugna", "requer", "justifica"…); e o texto alheio anunciado por dois-pontos (doutrina, decisão de origem, parecer, defesa)
+  if (fx !== null && !alertas.some((a) => a.startsWith("ALEGAÇÃO")) && alegacaoTc(nt1, fx[0], fx[1], bruto))
+    alertas.push(
+      "ALEGAÇÃO DA PARTE: na mesma frase, antes do trecho, o texto relata o que o jurisdicionado, o responsável, a defesa ou o " +
+        "recorrente afirma/sustenta/requer — pode ser tese da parte relatada no acórdão, não a decisão da Corte."
+    );
+  if (fx !== null) {
+    const bloco = blocoIntroduzido(nt1, bruto, fx[0], fx[1]);
+    if (bloco && !(bloco[2] === "PARECER TRANSCRITO" && alertas.some((a) => a.startsWith("PARECER"))) && !(bloco[2] === "DEFESA TRANSCRITA" && alertas.some((a) => a.startsWith("ALEGAÇÃO"))))
+      alertas.push(TEXTO_BLOCO[bloco[2]] + ` O bloco começa em «${umaLinha(bruto.slice(bloco[0], bloco[0] + 90))}…».`);
+  }
   const aspasAntes = (alvoNorm.slice(0, inicio).match(RE_ASPA_FRONTEIRA) || []).length;
   RE_ASPA_FRONTEIRA.lastIndex = 0;
   const entre = fx !== null ? entreAspas(bruto, nt1, fx[0], fx[1])
@@ -810,8 +847,30 @@ export function alertasAtribuicao(alvoNorm, inicio, fim, bruto = null, fragmento
         `OBITER DICTUM?: o trecho vem sob «${ob[0]}» — raciocínio hipotético ou fundamento alternativo; o resultado do julgado não dependeu dele. Vale como reforço, não como ratio decidendi; cite dizendo que é obiter.` +
           fraseDoObiter(bruto, ob[1], ob[2], fx[0])
       );
+    const alheio = alertas.some((a) => /^(?:DOUTRINA|DECISÃO TRANSCRITA|PARECER TRANSCRITO|DEFESA TRANSCRITA|ALEGAÇÃO)/.test(a));
+    const conc = !ob && !alheio ? concessivaNegativa(nt1, fx[0], fx[1]) : null;
+    if (conc)
+      alertas.push(
+        `OBITER DICTUM? (concessiva): o trecho é o conteúdo de uma oração concessiva («${umaLinha(bruto.slice(conc.a, conc.b))}») — a Corte ` +
+          `ADMITE o ponto e decide APESAR dele; não é a razão do resultado e, citado sem a oração principal («${conc.posposta ? "…" : ""}` +
+          `${umaLinha(bruto.slice(conc.pi, conc.pf))}${conc.posposta ? "" : "…"}»), pode parecer apoiar o resultado oposto. Cite a frase inteira ou só a oração principal.`
+      );
   }
   return alertas;
+}
+
+const TEXTO_BLOCO = {
+  "DOUTRINA": "DOUTRINA: o trecho está num bloco que o voto anuncia como lição de autor (\"leciona\", \"nas palavras de\", \"magistério\"…) — é a doutrina citada, não a posição do TCE-RO.",
+  "DECISÃO TRANSCRITA": "DECISÃO TRANSCRITA: o trecho está num bloco que o voto anuncia como a decisão de origem (decisão monocrática, acórdão recorrido/embargado) — é o que foi decidido antes, não necessariamente o que a Corte decide agora.",
+  "PARECER TRANSCRITO": "PARECER TRANSCRITO: o trecho está num bloco que o voto anuncia como manifestação do Ministério Público de Contas, do corpo técnico ou de relatório técnico — é a palavra do órgão opinativo, não a da Corte.",
+  "DEFESA TRANSCRITA": "DEFESA TRANSCRITA: o trecho está num bloco que o voto anuncia como justificativa ou razões da defesa/do responsável — é a tese da parte, não a decisão da Corte.",
+};
+let _cacheBlocos = { bruto: null, faixas: [] };
+/** Bloco anunciado por dois-pontos que contém a MAIORIA do trecho [a, b) (norm1), ou null. */
+function blocoIntroduzido(nt1, bruto, a, b) {
+  if (_cacheBlocos.bruto !== bruto) _cacheBlocos = { bruto, faixas: faixasIntroduzidasTc(nt1, bruto) };
+  for (const f of _cacheBlocos.faixas) if (Math.max(0, Math.min(b, f[1]) - Math.max(a, f[0])) * 2 > b - a) return f;
+  return null;
 }
 
 /** v1.6.0 (_frase_do_obiter): a frase onde está a marca de obiter, do começo da marca (com 40 caracteres antes) até o trecho; se a
@@ -880,7 +939,7 @@ const RE_ACORDAM_FECHO_TC = /ACORDAM\s+(?:os|as)\s+(?:[A-Za-zÀ-ÿ.]+\s+){0,3}?C
 //  - contexto de proclamação: "vencido" logo depois de pontuação, início ou "por maioria" — "o prazo vencido o Conselheiro Relator",
 //    "débitos vencidos o Conselheiro", "parcelas vencidas a Conselheiros Fiscais" (adjetivo do substantivo anterior) não disparam.
 const TITULO_CONS_N1 =
-  "(?:(?:excelentissim[oa]s?|exm[oa]s?\\.?|senhor(?:a|es|as)?|sr[as]?\\.?|eminentes?|nobres?|ilustres?|dout[oa]s?|insignes?|dign[oa]s?) ){0,3}";
+  "(?:(?:excelentissim[oa]s?|exm[oa]s?\\.?|senhor(?:a|es|as)?|sr[as]?\\.?|eminentes?|nobres?|ilustres?|dout[oa]s?|insignes?|dign[oa]s?|e\\.|em\\.) ){0,3}";
 const RE_VENCIDO_CONS_N1 = new RegExp(
   "(?<=(?:^|[,;:.()\\-\u2013\u2014]|(?<![a-z0-9])por maioria(?: de votos)?) *)vencid[oa]s?" +
     "(?:,? (?:parcialmente|em parte|integralmente|totalmente),?)? (?:(?:o|a|os|as) )?" + TITULO_CONS_N1 +
@@ -961,6 +1020,16 @@ export function maioriaDoFecho(bruto) {
     if (RE_MAIORIA_N1.test(jn)) {
       out.maioria = true;
       lerVencidosTc(j, jn, out, literais, false);
+    }
+    // 1.7.7 (porte do TJRO 1.41.9): "Relator vencido", "relator(a) vencido(a)" e "vencido o voto do Relator" — grafias que o rol acima
+    // não lia (o "vencido" vinha DEPOIS de "Relator", ou "voto do" ficava entre os dois)
+    for (const re of [RE_RELATOR_VENCIDO_POS, RE_VOTO_RELATOR_VENCIDO]) {
+      const mv = re.exec(jn);
+      if (!mv) continue;
+      out.maioria = true;
+      out.relatorVencido = true;
+      const lit = j.slice(mv.index, mv.index + mv[0].length).replace(/[ \t\n\r\f\v]+/g, " ").trim();
+      if (!literais.includes(lit)) literais.push(lit);
     }
     if (fimItens > 0) {
       let itens = bruto.slice(m.index + fimItens, m.index + fimItens + 4000);
@@ -1078,16 +1147,16 @@ const TETO_INICIOS_ENCADEAMENTO = 300;
 const TETO_CADEIAS_JULGADAS = 6;
 
 /** Encadeamentos em ordem dos fragmentos em `alvo` (um por ocorrência do 1º fragmento), do menor vão máximo para o maior. */
-function cadeiasDeFragmentos(alvo, fragsNorm) {
+function cadeiasDeFragmentos(alvo, fragsNorm, metades = null) {
   const out = [];
   let pos0 = 0;
   for (let t = 0; t < TETO_INICIOS_ENCADEAMENTO; t++) {
-    const primeiro = acharPalavras(alvo, fragsNorm[0], pos0);
+    const primeiro = acharSemMetade(alvo, fragsNorm[0], pos0, metades);
     if (!primeiro) break;
     const cadeia = [primeiro];
     let ok = true;
     for (const f of fragsNorm.slice(1)) {
-      const a = acharPalavras(alvo, f, cadeia[cadeia.length - 1].fim);
+      const a = acharSemMetade(alvo, f, cadeia[cadeia.length - 1].fim, metades);
       if (!a) { ok = false; break; }
       cadeia.push(a);
     }
@@ -1128,7 +1197,31 @@ function juizoElipseTc(vao, posicoes) {
   return { ok: true, tipo: null, partes };
 }
 
+/** 1.7.7: `acharPalavras` que pula a ocorrência que é só a metade de palavra partida depois de prefixo negativo ("procedente" dentro de
+ * "im- procedente", "incidência" dentro de "não-incidência"). `metades` = palavras que aparecem assim no texto (voz_tc.js). */
+function acharSemMetade(alvo, f, pos, metades) {
+  let a = acharPalavras(alvo, f, pos);
+  const w0 = (f || "").split(/[\s']+/).filter(Boolean)[0];
+  if (!metades || !metades.size || !w0 || !metades.has(w0)) return a;
+  while (a && /(?:^| )(?:in|im|i|ir|des|dis|nao) $/.test(alvo.slice(Math.max(0, a.inicio - 5), a.inicio))) a = acharPalavras(alvo, f, a.inicio + 1);
+  return a;
+}
+
+/** 1.7.7 (porte do TJRO 1.41.9): se a 1ª conferência não acha o trecho, tenta de novo juntando o hífen de quebra de linha do PDF
+ * ("con-\ntrato"), sem o hífen invisível (U+00AD) e sem o ponto de milhar ("1.000" = "1000"), nos DOIS lados. Números e palavras de
+ * negação continuam exatos: nenhuma palavra é omitida nem trocada. */
 export function verificarTrecho(textos, trecho) {
+  const r = verificarTrecho0(textos, trecho);
+  if (r.valido || r.distante || r.sem_texto || /curto demais|trecho vazio/.test(r.motivo || "")) return r;
+  if (!Object.values(textos).some((t) => precisaRelaxar(t || "", trecho || ""))) return r;
+  const tx = Object.fromEntries(Object.entries(textos).map(([k, t]) => [k, relaxarTexto(t)]));
+  const r2 = verificarTrecho0(tx, relaxarTrecho(trecho));
+  if (!r2.valido && !r2.distante) return r;
+  r2.motivo += " (casou depois de juntar hífen de quebra de linha, hífen invisível ou ponto de milhar; números e negações conferidos exatos)";
+  return r2;
+}
+
+function verificarTrecho0(textos, trecho) {
   const fragmentos = (trecho || "")
     .split(/\[\s*\.\.\.\s*\]|\[…\]|…/)
     .map((x) => x.trim())
@@ -1158,13 +1251,14 @@ export function verificarTrecho(textos, trecho) {
     const alvo = normalizarCasamento(texto);
     if (!alvo) continue;
     houveTexto = true;
+    const metades = metadesNegativas(norm1(texto));
     let pos = 0;
     const faltando = [];
     let inicio = -1;
     let fim = -1;
     for (const frag of fragmentos) {
       const f = normalizarCasamento(frag);
-      const achado = acharPalavras(alvo, f, pos);
+      const achado = acharSemMetade(alvo, f, pos, metades);
       if (!achado) {
         faltando.push(frag);
       } else {
@@ -1175,7 +1269,7 @@ export function verificarTrecho(textos, trecho) {
     let notaElipse = null;
     if (!faltando.length && fragmentos.length > 1) {
       // rodada 2: julga as cadeias da mais curta para a mais longa; vale a primeira que fica numa parte só e dentro do teto
-      const cadeias = cadeiasDeFragmentos(alvo, fragmentos.map((x) => normalizarCasamento(x)));
+      const cadeias = cadeiasDeFragmentos(alvo, fragmentos.map((x) => normalizarCasamento(x)), metades);
       let boa = null, primeiraRuim = null;
       for (const c of cadeias.slice(0, TETO_CADEIAS_JULGADAS)) {
         const posicoes = fragmentos.map((fr, i) => posicaoTceroTrecho(texto, alvo, c.cadeia[i].inicio, [fr]));
@@ -1217,7 +1311,26 @@ export function verificarTrecho(textos, trecho) {
       if (!posicao && norm1(nome).startsWith("ementa")) posicao = posicaoEmentaIsolada(texto, alvo, inicio, fragmentos);
       alertas.push(...alertasMaioria(texto, posicao, meioDoTrecho(texto, alvo, inicio, fragmentos)));
       const pagina = paginaDoTrecho(texto, alvo, inicio, fragmentos);
-      const voz = alertaVozDaCasa(nome, posicao, pagina);
+      // 1.7.7: costura de fragmentos curtos com [...] — os pedaços existem, a frase não está provada
+      const cost = costuraCurtaTc(fragmentos.map((x) => normalizarCasamento(x).split(/[\s']+/).filter(Boolean)));
+      if (cost)
+        alertas.push(
+          `FRAGMENTOS CURTOS (costura de [...]): os fragmentos estão no acórdão, na ordem, mas são curtos demais para provar que a frase ` +
+            `citada é a do acórdão — ${cost.join("; ")}. Palavras soltas aparecem em qualquer acórdão a poucas linhas umas das outras. Cite a ` +
+            "frase inteira, ou fragmentos maiores, e confira o contexto."
+        );
+      let voz = alertaVozDaCasa(nome, posicao, pagina);
+      // 1.7.7 (porte do TJRO 1.41.9): "sem alerta" não prova de quem é a frase. ✅ pleno só com marca positiva de voz da Corte (ementa,
+      // dispositivo ou fecho do acórdão) que passe nas guardas: autuação/certidão/página antes do trecho na ementa do cadastro; título
+      // RELATÓRIO/VOTO ou fala do relator entre o ACORDAM e o trecho; tese da parte relatada (alegação com sujeito do processo de contas).
+      const nt = norm1(texto);
+      const fxV = faixaNorm(nt, fragmentos, inicio / Math.max(1, alvo.length));
+      let guarda = "";
+      if (voz && fxV) guarda = guardaVozDaCasa(texto, nt, fxV[0], posicao, nome, fxV[1]) || (alegacaoTc(nt, fxV[0], fxV[1], texto) ? "a frase relata a tese da parte" : "");
+      else if (voz && !fxV) guarda = "a ferramenta não localizou o trecho no texto bruto para conferir as guardas";
+      if (guarda) voz = null;
+      const vozConfirmada = !!voz && !alertas.length;
+      const naoEVoz = !vozConfirmada && naoEVozDoOrgao(posicao);
       return {
         valido: true,
         onde: nome,
@@ -1230,6 +1343,9 @@ export function verificarTrecho(textos, trecho) {
         notas: [...(voz && !alertas.length ? [voz] : []), ...(notaElipse ? [notaElipse] : [])],
         posicao,
         pagina,
+        vozConfirmada,
+        naoEVoz,
+        guardaVoz: guarda,
       };
     }
     faltandoPorTexto[nome] = faltando;
@@ -2041,6 +2157,20 @@ export function falhaTransitoria(codigoOuNome) {
 /** `pdfRecibo` (só no caminho do recibo): o `texto_pdf_completo` do recibo — null/undefined = PDF não lido, false = lido em parte, true = inteiro.
  * Pendências do red team 22/10/2026 (achado médio): recibo sem o inteiro teor dava "❌ NÃO ENCONTRADO — parafraseie ou corrija" a trecho que
  * está no voto. Sem o PDF inteiro, a ausência só vale para ementa + dispositivo (+ a parte lida): sai ⚠️ NÃO VERIFICÁVEL NO INTEIRO TEOR. */
+/** 1.7.7 (porte do TJRO 1.41.9): o selo ✅ pleno exige evidência de que a frase é da Corte. Todos começam por "✅ VÁLIDO" (a frase
+ * existe no texto); o que vem depois diz se a VOZ foi confirmada. */
+export function seloValido(r) {
+  if (r.alertas && r.alertas.some((a) => a.startsWith("FRAGMENTOS CURTOS"))) return "✅ VÁLIDO, MAS A COSTURA NÃO PROVA A FRASE (FRAGMENTOS CURTOS)";
+  if (r.alertas && r.alertas.length) return "✅ VÁLIDO, MAS COM ALERTA DE ATRIBUIÇÃO";
+  if (r.vozConfirmada === false || r.vozConfirmada === undefined) {
+    if (r.naoEVoz)
+      return "✅ VÁLIDO, MAS NÃO É VOZ DO ÓRGÃO (RELATÓRIO/NARRAÇÃO/CABEÇALHO): é o relato do processo, das partes ou a autuação, não a decisão da Corte";
+    return "✅ VÁLIDO, VOZ NÃO CONFIRMADA: a frase existe no acórdão, mas nada prova que seja a posição do TCE-RO (pode ser defesa, parecer do MPC, " +
+      "corpo técnico, decisão de origem, lei ou doutrina transcritos sem marca) — leia o contexto antes de atribuir";
+  }
+  return "✅ VÁLIDO";
+}
+
 export function linhasVerificacaoItem(s, trecho, textos, { pdfRecibo = true } = {}) {
   const r = verificarTrecho(textos, trecho);
   const semInteiroTeor = pdfRecibo !== true && !r.valido && !r.distante && !r.sem_texto && r.faltando && r.faltando.length > 0 && !/curto demais/.test(r.motivo || "");
@@ -2051,7 +2181,7 @@ export function linhasVerificacaoItem(s, trecho, textos, { pdfRecibo = true } = 
       `${pdfRecibo === false ? " + a parte lida do PDF" : ""}), então isto NÃO prova que o trecho não está no voto. Rode ` +
       `obter_acordao_tcero(id_decisao=${s.idDecisao}, ler_inteiro_teor=true) e verifique de novo; até lá, não cite entre aspas`;
   }
-  const marca = r.valido ? "✅ VÁLIDO" : r.distante ? (r.tipo === "partes" ? "🟠 CONFIRA (fragmentos em partes diferentes)" : "🟠 CONFIRA (fragmentos distantes)") : r.sem_texto ? "⚠️ NÃO VERIFICÁVEL" : semInteiroTeor ? "⚠️ NÃO VERIFICÁVEL NO INTEIRO TEOR" : "❌ NÃO ENCONTRADO";
+  const marca = r.valido ? seloValido(r) : r.distante ? (r.tipo === "partes" ? "🟠 CONFIRA (fragmentos em partes diferentes)" : "🟠 CONFIRA (fragmentos distantes)") : r.sem_texto ? "⚠️ NÃO VERIFICÁVEL" : semInteiroTeor ? "⚠️ NÃO VERIFICÁVEL NO INTEIRO TEOR" : "❌ NÃO ENCONTRADO";
   const linhas = [`${marca} · id ${s.idDecisao} · ${s.sigla || "?"} ${s.numero || "?"} · ${r.motivo}`];
   if (r.valido && r.alertas && r.alertas.length) {
     for (const a of r.alertas) {
@@ -2059,6 +2189,7 @@ export function linhasVerificacaoItem(s, trecho, textos, { pdfRecibo = true } = 
     }
   }
   if (r.valido) for (const nota of r.notas || []) linhas.push(`   ℹ ${nota}`); // v1.7.0: VOZ DA CASA
+  if (r.valido && r.guardaVoz) linhas.push(`   ℹ voz da Corte não confirmada: ${r.guardaVoz}.`);
   if (r.valido && r.posicao) linhas.push(`   ℹ POSIÇÃO NO JULGADO: ${r.posicao}${r.pagina ? ` (${r.pagina})` : ""}.`);
   if (r.distante) {
     (r.fragmentos || []).forEach((x, i) => {

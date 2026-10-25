@@ -824,6 +824,14 @@ function comoConsultado(v) {
   return r.valido && r.forma !== L.texto(v) ? ` (consultado no portal como ${L.pyRepr(r.forma)})` : "";
 }
 
+// 1.7.7 (porte do TJRO 1.41.9): o que cada selo ✅ quer dizer sobre DE QUEM é a frase
+const SELOS_VOZ =
+  "Selos (sem o ícone): \"VÁLIDO\" sozinho = a frase existe E está na ementa, no dispositivo ou no fecho do acórdão (voz da Corte); " +
+  "\"VÁLIDO, VOZ NÃO CONFIRMADA\" = a frase existe (em geral no voto), mas nada prova que seja a posição do TCE-RO; " +
+  "\"VÁLIDO, MAS NÃO É VOZ DO ÓRGÃO\" = relatório, autuação ou cabeçalho; \"VÁLIDO, MAS COM ALERTA\" = ver o alerta " +
+  "(DOUTRINA, DECISÃO/PARECER/DEFESA TRANSCRITA, ALEGAÇÃO DA PARTE, OBITER DICTUM?, FRAGMENTOS CURTOS…). Só o primeiro vai à ficha " +
+  "como posição da Corte sem ler o contexto.";
+
 async function verificarCitacao(idDecisao, numeroAcordao, trecho) {
   if (!L.texto(trecho)) return "Informe o trecho que pretende citar entre aspas.";
   const idTxt = L.texto(idDecisao);
@@ -847,7 +855,7 @@ async function verificarCitacao(idDecisao, numeroAcordao, trecho) {
         "PDF — NÃO as \"informações adicionais\" (IA do DEJUR). Comparação tolerante a caixa, acento, " +
         "pontuação e espaço, casamento por PALAVRA INTEIRA; `[...]` separa fragmentos em ordem. Se ❌: " +
         "não cite entre aspas. Recibo desatualizado? Rode obter_acordao_tcero(id_decisao=...) de novo " +
-        "para regravá-lo.";
+        "para regravá-lo. " + SELOS_VOZ;
       return L.cortarBloco(linhas, L.ORCAMENTO_SAIDA, "resposta de verificar_citacao").join("\n") + rodapeRecibo;
     }
   }
@@ -910,7 +918,7 @@ async function verificarCitacao(idDecisao, numeroAcordao, trecho) {
     "entre aspas — parafraseie, ou confira o inteiro teor no PDF. Se vier ⚠️ NÃO " +
     "VERIFICÁVEL, o portal não trouxe texto algum para esta decisão — isso NÃO é o mesmo " +
     "que 'o trecho não existe'. ✅ com alerta de atribuição: o trecho é literal, mas pode " +
-    "não ser a posição da Corte — ver a linha de alerta.";
+    "não ser a posição da Corte — ver a linha de alerta. " + SELOS_VOZ;
   return L.cortarBloco(linhas, L.ORCAMENTO_SAIDA, "resposta de verificar_citacao").join("\n") + rodape;
 }
 
@@ -1122,7 +1130,9 @@ server.registerTool(
       "recibo local (zero requisição) quando ele existe. Comparação tolerante a caixa/acento/pontuação/" +
       "espaço, casamento por PALAVRA INTEIRA; `[...]` separa fragmentos em ordem. Alerta quando o trecho, " +
       "embora literal, pode não ser a posição da própria Corte (parecer do MPC/corpo técnico, alegação da " +
-      "parte, transcrição de outro tribunal, negação próxima, trecho entre aspas). NÃO cobre as " +
+      "parte, transcrição de outro tribunal, doutrina, decisão de origem, concessiva, costura de fragmentos curtos, " +
+      "negação próxima, trecho entre aspas). ✅ pleno só com a frase na ementa, no dispositivo ou no fecho; no voto sai " +
+      "'voz não confirmada' e no relatório 'não é voz do órgão'. NÃO cobre as " +
       '"informações adicionais" (IA) nem o inteiro teor em PDF ainda não lido.',
     inputSchema: {
       trecho: z.string().describe("Texto que se pretende citar entre aspas (cortes marcados com [...])."),
